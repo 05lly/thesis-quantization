@@ -1,0 +1,5 @@
+{
+    "python.pythonPath": "D:\\anaconda\\CondaData\\envs_dirs\\myenv\\python.exe",
+    "python-envs.defaultEnvManager": "ms-python.python:conda",
+    "python-envs.defaultPackageManager": "ms-python.python:conda"
+}
