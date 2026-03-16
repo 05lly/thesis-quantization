@@ -1,0 +1,76 @@
+2026-03-16 16:45:39,799 - INFO - Training on device: cuda
+2026-03-16 16:46:43,344 - INFO - Epoch 1: Loss=3910.9662, Train Acc=14.65%
+2026-03-16 16:46:50,344 - INFO - Validation: Loss=78.4461, Top1 Acc=22.55%
+2026-03-16 16:46:50,424 - INFO - New best model saved with accuracy 22.55%
+2026-03-16 16:47:49,248 - INFO - Epoch 2: Loss=11.6139, Train Acc=23.41%
+2026-03-16 16:47:55,864 - INFO - Validation: Loss=2.3996, Top1 Acc=31.16%
+2026-03-16 16:47:55,980 - INFO - New best model saved with accuracy 31.16%
+2026-03-16 16:48:54,598 - INFO - Epoch 3: Loss=1.8640, Train Acc=35.26%
+2026-03-16 16:49:01,239 - INFO - Validation: Loss=1.6742, Top1 Acc=39.48%
+2026-03-16 16:49:01,375 - INFO - New best model saved with accuracy 39.48%
+2026-03-16 16:50:01,232 - INFO - Epoch 4: Loss=1.6563, Train Acc=40.30%
+2026-03-16 16:50:07,744 - INFO - Validation: Loss=1.6732, Top1 Acc=40.23%
+2026-03-16 16:50:07,855 - INFO - New best model saved with accuracy 40.23%
+2026-03-16 16:51:06,450 - INFO - Epoch 5: Loss=1.5816, Train Acc=42.72%
+2026-03-16 16:51:13,624 - INFO - Validation: Loss=1.5609, Top1 Acc=43.95%
+2026-03-16 16:51:13,806 - INFO - New best model saved with accuracy 43.95%
+2026-03-16 16:52:14,414 - INFO - Epoch 6: Loss=1.5345, Train Acc=44.40%
+2026-03-16 16:52:21,102 - INFO - Validation: Loss=1.6455, Top1 Acc=41.40%
+2026-03-16 16:53:19,557 - INFO - Epoch 7: Loss=1.4794, Train Acc=46.49%
+2026-03-16 16:53:26,295 - INFO - Validation: Loss=1.5669, Top1 Acc=44.53%
+2026-03-16 16:53:26,417 - INFO - New best model saved with accuracy 44.53%
+2026-03-16 16:54:25,009 - INFO - Epoch 8: Loss=1.4372, Train Acc=48.02%
+2026-03-16 16:54:31,705 - INFO - Validation: Loss=1.4105, Top1 Acc=48.57%
+2026-03-16 16:54:31,827 - INFO - New best model saved with accuracy 48.57%
+2026-03-16 16:55:30,983 - INFO - Epoch 9: Loss=1.3973, Train Acc=49.65%
+2026-03-16 16:55:37,772 - INFO - Validation: Loss=1.4586, Top1 Acc=47.16%
+2026-03-16 16:56:36,602 - INFO - Epoch 10: Loss=1.3607, Train Acc=50.66%
+2026-03-16 16:56:43,178 - INFO - Validation: Loss=1.4852, Top1 Acc=46.72%
+2026-03-16 16:57:43,329 - INFO - Epoch 11: Loss=1.3198, Train Acc=52.28%
+2026-03-16 16:57:50,044 - INFO - Validation: Loss=1.4191, Top1 Acc=47.91%
+2026-03-16 16:58:48,986 - INFO - Epoch 12: Loss=1.2827, Train Acc=53.87%
+2026-03-16 16:58:55,561 - INFO - Validation: Loss=1.4291, Top1 Acc=49.03%
+2026-03-16 16:58:55,676 - INFO - New best model saved with accuracy 49.03%
+2026-03-16 16:59:54,147 - INFO - Epoch 13: Loss=1.2553, Train Acc=54.96%
+2026-03-16 17:00:00,651 - INFO - Validation: Loss=1.3684, Top1 Acc=51.40%
+2026-03-16 17:00:00,769 - INFO - New best model saved with accuracy 51.40%
+2026-03-16 17:00:58,985 - INFO - Epoch 14: Loss=1.2103, Train Acc=56.50%
+2026-03-16 17:01:05,586 - INFO - Validation: Loss=1.5490, Top1 Acc=43.70%
+2026-03-16 17:02:04,334 - INFO - Epoch 15: Loss=1.1681, Train Acc=58.43%
+2026-03-16 17:02:10,903 - INFO - Validation: Loss=1.2230, Top1 Acc=56.63%
+2026-03-16 17:02:11,017 - INFO - New best model saved with accuracy 56.63%
+2026-03-16 17:03:09,016 - INFO - Epoch 16: Loss=1.1402, Train Acc=59.33%
+2026-03-16 17:03:15,395 - INFO - Validation: Loss=1.2035, Top1 Acc=56.53%
+2026-03-16 17:04:15,561 - INFO - Epoch 17: Loss=1.1065, Train Acc=60.53%
+2026-03-16 17:04:22,141 - INFO - Validation: Loss=3.3872, Top1 Acc=23.70%
+2026-03-16 17:05:21,254 - INFO - Epoch 18: Loss=1.0703, Train Acc=62.03%
+2026-03-16 17:05:27,994 - INFO - Validation: Loss=1.4757, Top1 Acc=50.04%
+2026-03-16 17:06:27,474 - INFO - Epoch 19: Loss=1.0259, Train Acc=63.58%
+2026-03-16 17:06:34,135 - INFO - Validation: Loss=1.6128, Top1 Acc=48.39%
+2026-03-16 17:07:33,838 - INFO - Epoch 20: Loss=0.9544, Train Acc=66.36%
+2026-03-16 17:07:40,338 - INFO - Validation: Loss=1.0810, Top1 Acc=61.23%
+2026-03-16 17:07:40,455 - INFO - New best model saved with accuracy 61.23%
+2026-03-16 17:08:38,706 - INFO - Epoch 21: Loss=0.9448, Train Acc=66.90%
+2026-03-16 17:08:44,948 - INFO - Validation: Loss=1.0103, Top1 Acc=64.19%
+2026-03-16 17:08:45,064 - INFO - New best model saved with accuracy 64.19%
+2026-03-16 17:09:43,538 - INFO - Epoch 22: Loss=0.9298, Train Acc=67.18%
+2026-03-16 17:09:50,926 - INFO - Validation: Loss=1.1104, Top1 Acc=61.17%
+2026-03-16 17:10:51,738 - INFO - Epoch 23: Loss=0.9056, Train Acc=68.20%
+2026-03-16 17:10:58,170 - INFO - Validation: Loss=1.1411, Top1 Acc=60.36%
+2026-03-16 17:11:57,481 - INFO - Epoch 24: Loss=0.8863, Train Acc=68.93%
+2026-03-16 17:12:04,568 - INFO - Validation: Loss=1.2671, Top1 Acc=59.36%
+2026-03-16 17:13:03,477 - INFO - Epoch 25: Loss=0.8722, Train Acc=69.24%
+2026-03-16 17:13:10,046 - INFO - Validation: Loss=1.0612, Top1 Acc=62.90%
+2026-03-16 17:14:08,908 - INFO - Epoch 26: Loss=0.8057, Train Acc=71.61%
+2026-03-16 17:14:15,416 - INFO - Validation: Loss=0.8827, Top1 Acc=68.72%
+2026-03-16 17:14:15,528 - INFO - New best model saved with accuracy 68.72%
+2026-03-16 17:15:14,022 - INFO - Epoch 27: Loss=0.7944, Train Acc=72.14%
+2026-03-16 17:15:20,680 - INFO - Validation: Loss=0.9750, Top1 Acc=65.73%
+2026-03-16 17:16:22,624 - INFO - Epoch 28: Loss=0.7830, Train Acc=72.50%
+2026-03-16 17:16:29,278 - INFO - Validation: Loss=0.8945, Top1 Acc=69.11%
+2026-03-16 17:16:29,395 - INFO - New best model saved with accuracy 69.11%
+2026-03-16 17:17:27,503 - INFO - Epoch 29: Loss=0.7682, Train Acc=73.09%
+2026-03-16 17:17:34,145 - INFO - Validation: Loss=0.9057, Top1 Acc=68.54%
+2026-03-16 17:18:33,322 - INFO - Epoch 30: Loss=0.7593, Train Acc=73.22%
+2026-03-16 17:18:40,063 - INFO - Validation: Loss=0.8586, Top1 Acc=70.39%
+2026-03-16 17:18:40,191 - INFO - New best model saved with accuracy 70.39%
