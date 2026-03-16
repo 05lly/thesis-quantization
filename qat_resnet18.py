@@ -1,4 +1,4 @@
-# qat_resnet18_fixed_v2.py
+# qat_resnet18_fixed_v3.py
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -8,6 +8,7 @@ from tqdm import tqdm
 import os
 import logging
 import warnings
+import copy
 warnings.filterwarnings('ignore')
 
 # 设置日志
@@ -68,45 +69,25 @@ model = create_model()
 model = fuse_model(model)
 
 # -------------------------------
-# QAT准备 - 修复量化参数问题
+# QAT准备
 # -------------------------------
-# 使用自定义的QAT配置，确保zero_point在正确范围内
-from torch.ao.quantization import QConfig, MinMaxObserver, PerChannelMinMaxObserver, MovingAverageMinMaxObserver
-from torch.ao.quantization.fake_quantize import FakeQuantize
-
-# 自定义fake quantize配置
-my_qconfig = QConfig(
-    activation=FakeQuantize.with_args(observer=MovingAverageMinMaxObserver,
-                                     quant_min=0,
-                                     quant_max=255,
-                                     dtype=torch.quint8,
-                                     qscheme=torch.per_tensor_affine,
-                                     reduce_range=False),
-    weight=FakeQuantize.with_args(observer=PerChannelMinMaxObserver,
-                                 quant_min=-128,
-                                 quant_max=127,
-                                 dtype=torch.qint8,
-                                 qscheme=torch.per_channel_symmetric,
-                                 reduce_range=False)
-)
-
-# 设置QAT配置
+# 使用默认的QAT配置，但确保可以序列化
 model.train()
-model.qconfig = my_qconfig
+model.qconfig = tq.get_default_qat_qconfig('fbgemm')
 
 # 准备QAT
 tq.prepare_qat(model, inplace=True)
 model.to(device)
 
 # -------------------------------
-# 优化器设置 - 使用更小的学习率
+# 优化器设置
 # -------------------------------
 criterion = nn.CrossEntropyLoss()
 optimizer = optim.SGD(model.parameters(), lr=0.0001, momentum=0.9, weight_decay=1e-4)
 scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=30)
 
 # -------------------------------
-# 训练函数 - 添加梯度裁剪
+# 训练函数
 # -------------------------------
 def train_one_epoch(epoch):
     model.train()
@@ -174,17 +155,11 @@ for epoch in range(1, num_epochs+1):
     logger.info(f"Epoch {epoch}: Train Loss={train_loss:.4f}, Train Acc={train_acc:.2f}%")
     logger.info(f"Validation: Loss={val_loss:.4f}, Acc={val_acc:.2f}%")
     
-    # 保存最佳模型
+    # 保存最佳模型 - 只保存state_dict，不保存qconfig
     if val_acc > best_acc:
         best_acc = val_acc
-        # 保存整个模型（包括QAT状态）
-        torch.save({
-            'epoch': epoch,
-            'model_state_dict': model.state_dict(),
-            'optimizer_state_dict': optimizer.state_dict(),
-            'best_acc': best_acc,
-            'qconfig': model.qconfig,
-        }, "best_qat_model.pth")
+        # 只保存模型权重，避免序列化问题
+        torch.save(model.state_dict(), "best_qat_model_weights.pth")
         logger.info(f"New best model saved with accuracy {best_acc:.2f}%")
     
     scheduler.step()
@@ -193,43 +168,65 @@ for epoch in range(1, num_epochs+1):
 # 转换为INT8
 # -------------------------------
 logger.info("Converting to INT8...")
-model.eval()
-model.to('cpu')
 
-# 转换前确保模型处于正确的状态
-model_int8 = tq.convert(model)
+# 创建新模型用于转换
+def create_eval_model():
+    model_eval = create_model()
+    model_eval = fuse_model(model_eval)
+    model_eval.eval()
+    model_eval.qconfig = tq.get_default_qat_qconfig('fbgemm')
+    tq.prepare_qat(model_eval, inplace=True)
+    # 加载训练好的权重
+    model_eval.load_state_dict(torch.load("best_qat_model_weights.pth"))
+    model_eval.eval()
+    model_eval.to('cpu')
+    return model_eval
+
+# 创建评估模型并转换
+model_eval = create_eval_model()
+model_int8 = tq.convert(model_eval)
 
 # 验证INT8模型
 val_loss, val_acc = validate(model_int8, test_loader)
 logger.info(f"INT8 Model - Loss: {val_loss:.4f}, Acc: {val_acc:.2f}%")
 logger.info(f"Accuracy drop: {best_acc - val_acc:.2f}%")
 
-# 保存INT8模型
-torch.save({
-    'model_state_dict': model_int8.state_dict(),
+# 保存INT8模型（只保存权重）
+torch.save(model_int8.state_dict(), "resnet18_int8_weights.pth")
+
+# 同时保存完整的模型信息（不含qconfig）
+model_info = {
     'model_architecture': 'resnet18_qat_int8',
     'input_size': (3, 224, 224),
     'num_classes': 10,
-    'accuracy': val_acc
-}, "resnet18_int8_final.pth")
+    'accuracy': val_acc,
+    'best_fp32_acc': best_acc
+}
+torch.save(model_info, "resnet18_int8_info.pth")
 
 logger.info("Training and quantization completed!")
 
 # -------------------------------
-# 测试单个batch验证模型是否正常工作
+# 测试函数
 # -------------------------------
-def test_model_sanity():
-    logger.info("Running sanity check...")
-    model.eval()
-    test_input = torch.randn(1, 3, 224, 224).to(device)
-    try:
-        with torch.no_grad():
-            output = model(test_input)
-        logger.info(f"Sanity check passed! Output shape: {output.shape}")
-        return True
-    except Exception as e:
-        logger.error(f"Sanity check failed: {e}")
-        return False
+def test_loaded_model():
+    """测试加载的INT8模型"""
+    logger.info("Testing loaded INT8 model...")
+    
+    # 创建新模型架构
+    test_model = models.resnet18(num_classes=10)
+    test_model.eval()
+    
+    # 加载权重
+    test_model.load_state_dict(torch.load("resnet18_int8_weights.pth"))
+    
+    # 测试一个batch
+    test_input = torch.randn(1, 3, 224, 224)
+    with torch.no_grad():
+        output = test_model(test_input)
+    
+    logger.info(f"Test passed! Output shape: {output.shape}")
+    return True
 
-# 执行sanity check
-test_model_sanity()
+# 执行测试
+test_loaded_model()
