@@ -20,8 +20,7 @@ logger.info(f"Training on device: {device}")
 # -------------------------------
 # 数据集准备
 # -------------------------------
-data_root = "./data"
-
+data_root = '/root/autodl-tmp/thesis-quantization/data'  # CIFAR-10 本地路径
 # 正确的预处理：Resize到224x224
 transform_train = transforms.Compose([
     transforms.Resize(224),
