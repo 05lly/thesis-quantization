@@ -1,4 +1,4 @@
-# qat_resnet18_fixed_v3.py
+# qat_resnet18_fixed_v4.py
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -8,7 +8,6 @@ from tqdm import tqdm
 import os
 import logging
 import warnings
-import copy
 warnings.filterwarnings('ignore')
 
 # 设置日志
@@ -21,8 +20,7 @@ logger.info(f"Training on device: {device}")
 # -------------------------------
 # 数据集准备
 # -------------------------------
-data_root = '/root/autodl-tmp/thesis-quantization/data'  # CIFAR-10 本地路径
-# 正确的预处理：Resize到224x224
+data_root = '/root/autodl-tmp/thesis-quantization/data'
 transform_train = transforms.Compose([
     transforms.Resize(224),
     transforms.RandomHorizontalFlip(),
@@ -47,17 +45,15 @@ test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=32, shuffle=F
 # -------------------------------
 def create_model():
     model = models.resnet18(weights=models.ResNet18_Weights.IMAGENET1K_V1)
-    model.fc = nn.Linear(model.fc.in_features, 10)  # CIFAR-10
+    model.fc = nn.Linear(model.fc.in_features, 10)
     return model
 
 def fuse_model(model):
     """正确的ResNet18融合方式"""
     model.eval()
-    # 融合每个BasicBlock中的卷积和BN
     for module_name, module in model.named_children():
         if "layer" in module_name:
             for basic_block_name, basic_block in module.named_children():
-                # 使用正确的融合方式
                 tq.fuse_modules(basic_block, [['conv1', 'bn1', 'relu']], inplace=True)
                 tq.fuse_modules(basic_block, [['conv2', 'bn2']], inplace=True)
     return model
@@ -71,11 +67,8 @@ model = fuse_model(model)
 # -------------------------------
 # QAT准备
 # -------------------------------
-# 使用默认的QAT配置，但确保可以序列化
 model.train()
 model.qconfig = tq.get_default_qat_qconfig('fbgemm')
-
-# 准备QAT
 tq.prepare_qat(model, inplace=True)
 model.to(device)
 
@@ -104,7 +97,6 @@ def train_one_epoch(epoch):
         loss = criterion(outputs, targets)
         loss.backward()
         
-        # 梯度裁剪防止梯度爆炸
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
         
         optimizer.step()
@@ -114,7 +106,6 @@ def train_one_epoch(epoch):
         total += targets.size(0)
         correct += predicted.eq(targets).sum().item()
         
-        # 更新进度条
         loop.set_postfix({
             'loss': running_loss/total,
             'acc': 100.*correct/total
@@ -145,7 +136,7 @@ def validate(model, loader):
 # 训练循环
 # -------------------------------
 best_acc = 0
-num_epochs = 4
+num_epochs = 10  # 增加到10个epoch
 
 logger.info("Starting QAT training...")
 for epoch in range(1, num_epochs+1):
@@ -155,78 +146,98 @@ for epoch in range(1, num_epochs+1):
     logger.info(f"Epoch {epoch}: Train Loss={train_loss:.4f}, Train Acc={train_acc:.2f}%")
     logger.info(f"Validation: Loss={val_loss:.4f}, Acc={val_acc:.2f}%")
     
-    # 保存最佳模型 - 只保存state_dict，不保存qconfig
     if val_acc > best_acc:
         best_acc = val_acc
-        # 只保存模型权重，避免序列化问题
+        # 保存训练好的QAT模型
         torch.save(model.state_dict(), "best_qat_model_weights.pth")
         logger.info(f"New best model saved with accuracy {best_acc:.2f}%")
     
     scheduler.step()
 
 # -------------------------------
-# 转换为INT8
+# 转换为INT8 - 修复版
 # -------------------------------
 logger.info("Converting to INT8...")
 
-# 创建新模型用于转换
-def create_eval_model():
-    model_eval = create_model()
-    model_eval = fuse_model(model_eval)
-    model_eval.eval()
-    model_eval.qconfig = tq.get_default_qat_qconfig('fbgemm')
-    tq.prepare_qat(model_eval, inplace=True)
-    # 加载训练好的权重
-    model_eval.load_state_dict(torch.load("best_qat_model_weights.pth"))
-    model_eval.eval()
-    model_eval.to('cpu')
-    return model_eval
-
-# 创建评估模型并转换
-model_eval = create_eval_model()
-model_int8 = tq.convert(model_eval)
+# 方法1：直接使用训练好的模型（最简单）
+logger.info("Method 1: Converting trained model directly...")
+model.eval()
+model.to('cpu')
+model_int8 = tq.convert(model)
 
 # 验证INT8模型
 val_loss, val_acc = validate(model_int8, test_loader)
-logger.info(f"INT8 Model - Loss: {val_loss:.4f}, Acc: {val_acc:.2f}%")
+logger.info(f"INT8 Model (direct) - Loss: {val_loss:.4f}, Acc: {val_acc:.2f}%")
 logger.info(f"Accuracy drop: {best_acc - val_acc:.2f}%")
 
-# 保存INT8模型（只保存权重）
-torch.save(model_int8.state_dict(), "resnet18_int8_weights.pth")
+# 保存INT8模型
+torch.save(model_int8.state_dict(), "resnet18_int8_direct.pth")
 
-# 同时保存完整的模型信息（不含qconfig）
+# 方法2：重新创建模型并加载权重（如果需要）
+logger.info("Method 2: Creating new model and loading weights...")
+
+def create_model_for_conversion():
+    # 创建新模型
+    new_model = create_model()
+    new_model = fuse_model(new_model)
+    
+    # 设置为训练模式进行prepare_qat
+    new_model.train()
+    new_model.qconfig = tq.get_default_qat_qconfig('fbgemm')
+    tq.prepare_qat(new_model, inplace=True)
+    
+    # 加载训练好的权重
+    new_model.load_state_dict(torch.load("best_qat_model_weights.pth"))
+    
+    # 切换到eval模式进行转换
+    new_model.eval()
+    new_model.to('cpu')
+    return new_model
+
+# 创建新模型并转换
+new_model = create_model_for_conversion()
+new_model_int8 = tq.convert(new_model)
+
+# 验证新INT8模型
+val_loss2, val_acc2 = validate(new_model_int8, test_loader)
+logger.info(f"INT8 Model (new) - Loss: {val_loss2:.4f}, Acc: {val_acc2:.2f}%")
+
+# 保存第二个INT8模型
+torch.save(new_model_int8.state_dict(), "resnet18_int8_new.pth")
+
+# 保存模型信息
 model_info = {
     'model_architecture': 'resnet18_qat_int8',
     'input_size': (3, 224, 224),
     'num_classes': 10,
-    'accuracy': val_acc,
+    'accuracy_direct': val_acc,
+    'accuracy_new': val_acc2,
     'best_fp32_acc': best_acc
 }
 torch.save(model_info, "resnet18_int8_info.pth")
 
-logger.info("Training and quantization completed!")
+logger.info("Training and quantization completed successfully!")
 
 # -------------------------------
-# 测试函数
+# 快速测试
 # -------------------------------
-def test_loaded_model():
-    """测试加载的INT8模型"""
-    logger.info("Testing loaded INT8 model...")
+def quick_test():
+    """快速测试模型是否能正常运行"""
+    logger.info("Running quick test...")
     
-    # 创建新模型架构
-    test_model = models.resnet18(num_classes=10)
-    test_model.eval()
-    
-    # 加载权重
-    test_model.load_state_dict(torch.load("resnet18_int8_weights.pth"))
-    
-    # 测试一个batch
+    # 测试直接转换的模型
+    test_model = model_int8
     test_input = torch.randn(1, 3, 224, 224)
     with torch.no_grad():
         output = test_model(test_input)
+    logger.info(f"Direct model test passed! Output shape: {output.shape}")
     
-    logger.info(f"Test passed! Output shape: {output.shape}")
+    # 测试新创建的模型
+    test_model2 = new_model_int8
+    with torch.no_grad():
+        output2 = test_model2(test_input)
+    logger.info(f"New model test passed! Output shape: {output2.shape}")
+    
     return True
 
-# 执行测试
-test_loaded_model()
+quick_test()
