@@ -41,7 +41,7 @@ logging.info(f"Training on device: {device}")
 # ----------------------------
 # 数据集与预处理（本地）
 # ----------------------------
-data_root = './data'  # 你的 cifar-10-batches-py 所在目录
+data_root = '/root/autodl-tmp/thesis-quantization/data'
 transform_train = transforms.Compose([
     transforms.Resize((224, 224)),
     transforms.ToTensor(),
