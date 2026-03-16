@@ -1,4 +1,7 @@
-# 文件名：qat_resnet18_local.py
+# 文件名：qat_resnet18.py
+import os
+import logging
+from tqdm import tqdm
 
 import torch
 import torch.nn as nn
@@ -6,11 +9,6 @@ import torch.optim as optim
 import torch.ao.quantization as tq
 import torch.ao.quantization.quantize_fx as quantize_fx
 from torchvision import datasets, transforms, models
-from torch.utils.data import DataLoader
-from torch.optim.lr_scheduler import ReduceLROnPlateau
-import logging
-import os
-from tqdm import tqdm
 
 # ----------------------------
 # 日志配置
@@ -41,25 +39,23 @@ logging.info(f"Training on device: {device}")
 # ----------------------------
 # 数据集与预处理（本地）
 # ----------------------------
-data_root = '/root/autodl-tmp/thesis-quantization/data'
+data_root = '/root/autodl-tmp/thesis-quantization/data'  # 指向服务器本地路径
 transform_train = transforms.Compose([
     transforms.Resize((224, 224)),
     transforms.ToTensor(),
-    transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                         std=[0.229, 0.224, 0.225])
+    transforms.Normalize([0.485,0.456,0.406],[0.229,0.224,0.225])
 ])
 transform_test = transforms.Compose([
     transforms.Resize((224, 224)),
     transforms.ToTensor(),
-    transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                         std=[0.229, 0.224, 0.225])
+    transforms.Normalize([0.485,0.456,0.406],[0.229,0.224,0.225])
 ])
 
 train_dataset = datasets.CIFAR10(root=data_root, train=True, download=False, transform=transform_train)
 test_dataset = datasets.CIFAR10(root=data_root, train=False, download=False, transform=transform_test)
 
-train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=4)
-test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=4)
+train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=4)
+test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=4)
 
 # ----------------------------
 # 构建模型
@@ -78,6 +74,7 @@ def fuse_model(model):
                 tq.fuse_modules(block, ['conv2', 'bn2'], inplace=True)
     return model
 
+model_fp32.eval()  # 关键：eval模式才能融合
 model_fp32 = fuse_model(model_fp32)
 
 # ----------------------------
@@ -90,17 +87,19 @@ model_fp32.qconfig = tq.QConfig(
     weight=tq.default_weight_observer
 )
 model_fp32 = quantize_fx.prepare_qat_fx(model_fp32, qconfig_mapping, example_inputs=example_input)
+
 model_fp32 = model_fp32.to(device)
+model_fp32.train()  # QAT训练需要回到train模式
 
 # ----------------------------
 # 损失函数、优化器、调度器
 # ----------------------------
 criterion = nn.CrossEntropyLoss()
 optimizer = optim.Adam(model_fp32.parameters(), lr=learning_rate)
-scheduler = ReduceLROnPlateau(optimizer, mode='max', factor=0.5, patience=3, verbose=True)
+scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', factor=0.5, patience=3, verbose=True)
 
 # ----------------------------
-# 训练函数
+# 训练与验证函数
 # ----------------------------
 def train_one_epoch(model, loader, criterion, optimizer, epoch):
     model.train()
@@ -114,24 +113,21 @@ def train_one_epoch(model, loader, criterion, optimizer, epoch):
         loss = criterion(outputs, labels)
         loss.backward()
         optimizer.step()
-        
+
         running_loss += loss.item() * images.size(0)
         _, predicted = outputs.max(1)
         total += labels.size(0)
         correct += predicted.eq(labels).sum().item()
     epoch_loss = running_loss / total
     epoch_acc = 100. * correct / total
-    logging.info(f"Epoch {epoch}: Loss={epoch_loss:.4f}, Top1 Accuracy={epoch_acc:.2f}%")
+    logging.info(f"Epoch {epoch}: Loss={epoch_loss:.4f}, Train Acc={epoch_acc:.2f}%")
     return epoch_loss, epoch_acc
 
-# ----------------------------
-# 测试函数
-# ----------------------------
 def evaluate(model, loader, criterion):
     model.eval()
+    running_loss = 0
     correct = 0
     total = 0
-    running_loss = 0
     with torch.no_grad():
         for images, labels in loader:
             images, labels = images.to(device), labels.to(device)
@@ -141,8 +137,8 @@ def evaluate(model, loader, criterion):
             _, predicted = outputs.max(1)
             total += labels.size(0)
             correct += predicted.eq(labels).sum().item()
-    acc = 100.* correct/total
-    loss = running_loss/total
+    loss = running_loss / total
+    acc = 100.* correct / total
     return loss, acc
 
 # ----------------------------
@@ -155,11 +151,10 @@ early_stop_patience = 5
 for epoch in range(1, epochs+1):
     train_loss, train_acc = train_one_epoch(model_fp32, train_loader, criterion, optimizer, epoch)
     test_loss, test_acc = evaluate(model_fp32, test_loader, criterion)
-    logging.info(f"Validation: Loss={test_loss:.4f}, Top1 Accuracy={test_acc:.2f}%")
-    
-    scheduler.step(test_acc)  # 调整学习率
-    
-    # 早停 + 保存最佳模型
+    logging.info(f"Validation: Loss={test_loss:.4f}, Top1 Acc={test_acc:.2f}%")
+
+    scheduler.step(test_acc)
+
     if test_acc > best_acc:
         best_acc = test_acc
         patience_counter = 0
@@ -179,15 +174,12 @@ model_fp32.eval()
 model_fp32.to('cpu')
 model_int8 = tq.convert(model_fp32)
 
-# ----------------------------
-# INT8 模型评估
-# ----------------------------
 int8_loss, int8_acc = evaluate(model_int8, test_loader, criterion)
 logging.info(f"INT8 Model Accuracy: {int8_acc:.2f}%")
 logging.info(f"Accuracy Drop: {best_acc - int8_acc:.2f}%")
 
 # ----------------------------
-# 保存完整 INT8 模型配置
+# 保存完整 INT8 模型
 # ----------------------------
 torch.save({
     'model_state_dict': model_int8.state_dict(),
