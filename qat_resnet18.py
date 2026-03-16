@@ -1,234 +1,195 @@
-import os
-import time
 import torch
 import torch.nn as nn
 import torch.optim as optim
 import torch.ao.quantization as tq
+import torch.ao.quantization.quantize_fx as quantize_fx
 from torchvision import datasets, transforms, models
 from torch.utils.data import DataLoader
-import warnings
-warnings.filterwarnings('ignore')
+from torch.optim.lr_scheduler import ReduceLROnPlateau
+import logging
+import os
+from tqdm import tqdm
 
-# ==================== 基础配置 ====================
+# ----------------------------
+# 日志配置
+# ----------------------------
+os.makedirs("logs", exist_ok=True)
+logging.basicConfig(
+    filename="logs/qat_training_log.txt",
+    filemode="w",
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s"
+)
+console = logging.StreamHandler()
+console.setLevel(logging.INFO)
+formatter = logging.Formatter('%(message)s')
+console.setFormatter(formatter)
+logging.getLogger('').addHandler(console)
+
+# ----------------------------
+# 超参数
+# ----------------------------
+batch_size = 128
+epochs = 15
+learning_rate = 1e-3
+num_classes = 10  # 根据你数据集修改
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-print("="*60)
-print("QAT Training with GPU Support")
-print("="*60)
-print(f"Using device: {device}")
-print(f"PyTorch version: {torch.__version__}")
-print(f"CUDA available: {torch.cuda.is_available()}")
-if torch.cuda.is_available():
-    print(f"GPU: {torch.cuda.get_device_name(0)}")
-    print(f"GPU Memory: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.1f} GB")
+logging.info(f"Training on device: {device}")
 
-print(f"Quantized engines: {torch.backends.quantized.supported_engines}")
-
-batch_size = 64
-num_epochs = 15
-learning_rate = 0.001
-os.makedirs("models", exist_ok=True)
-
-# ==================== CIFAR-10 数据 ====================
-print("\n=== Loading CIFAR-10 Dataset ===")
+# ----------------------------
+# 数据集与预处理
+# ----------------------------
 transform_train = transforms.Compose([
-    transforms.Resize(224),
-    transforms.RandomHorizontalFlip(),
-    transforms.RandomCrop(224, padding=4),
+    transforms.Resize((224, 224)),
     transforms.ToTensor(),
-    transforms.Normalize(mean=[0.485,0.456,0.406], std=[0.229,0.224,0.225])
+    transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                         std=[0.229, 0.224, 0.225])
 ])
-
 transform_test = transforms.Compose([
-    transforms.Resize(224),
+    transforms.Resize((224, 224)),
     transforms.ToTensor(),
-    transforms.Normalize(mean=[0.485,0.456,0.406], std=[0.229,0.224,0.225])
+    transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                         std=[0.229, 0.224, 0.225])
 ])
 
-train_dataset = datasets.CIFAR10(root="./data", train=True, download=True, transform=transform_train)
-test_dataset = datasets.CIFAR10(root="./data", train=False, download=True, transform=transform_test)
+train_dataset = datasets.CIFAR10(root='./data', train=True, download=True, transform=transform_train)
+test_dataset = datasets.CIFAR10(root='./data', train=False, download=True, transform=transform_test)
+train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=4)
+test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=4)
 
-train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True,
-                          num_workers=0, pin_memory=True if device.type=='cuda' else False)
-test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False,
-                         num_workers=0, pin_memory=True if device.type=='cuda' else False)
+# ----------------------------
+# 构建模型
+# ----------------------------
+model_fp32 = models.resnet18(pretrained=True)
+model_fp32.fc = nn.Linear(model_fp32.fc.in_features, num_classes)
 
-print(f"Train samples: {len(train_dataset)}, Test samples: {len(test_dataset)}")
-print(f"Batch size: {batch_size}")
-
-# ==================== 加载 FP32 Checkpoint ====================
-print("\n=== Loading FP32 baseline model ===")
-model_qat = models.resnet18(pretrained=False)
-model_qat.fc = nn.Linear(model_qat.fc.in_features, 10)
-
-fp32_path = "models/resnet18_fp32.pth"
-if not os.path.exists(fp32_path):
-    print(f"❌ FP32 checkpoint not found: {fp32_path}")
-    print("Please train FP32 model first using train_fp32.py")
-    exit(1)
-
-checkpoint = torch.load(fp32_path, map_location='cpu')
-model_qat.load_state_dict(checkpoint, strict=False)
-print(f"✓ Loaded FP32 checkpoint: {fp32_path}")
-
-# ==================== 模型融合函数 ====================
-def fuse_resnet18(model):
-    fuse_list = [
-        ['conv1', 'bn1', 'relu'],
-        ['layer1.0.conv1', 'layer1.0.bn1', 'layer1.0.relu'],
-        ['layer1.0.conv2', 'layer1.0.bn2'],
-        ['layer1.1.conv1', 'layer1.1.bn1', 'layer1.1.relu'],
-        ['layer1.1.conv2', 'layer1.1.bn2'],
-        ['layer2.0.conv1', 'layer2.0.bn1', 'layer2.0.relu'],
-        ['layer2.0.conv2', 'layer2.0.bn2'],
-        ['layer2.0.downsample.0', 'layer2.0.downsample.1'],
-        ['layer2.1.conv1', 'layer2.1.bn1', 'layer2.1.relu'],
-        ['layer2.1.conv2', 'layer2.1.bn2'],
-        ['layer3.0.conv1', 'layer3.0.bn1', 'layer3.0.relu'],
-        ['layer3.0.conv2', 'layer3.0.bn2'],
-        ['layer3.0.downsample.0', 'layer3.0.downsample.1'],
-        ['layer3.1.conv1', 'layer3.1.bn1', 'layer3.1.relu'],
-        ['layer3.1.conv2', 'layer3.1.bn2'],
-        ['layer4.0.conv1', 'layer4.0.bn1', 'layer4.0.relu'],
-        ['layer4.0.conv2', 'layer4.0.bn2'],
-        ['layer4.0.downsample.0', 'layer4.0.downsample.1'],
-        ['layer4.1.conv1', 'layer4.1.bn1', 'layer4.1.relu'],
-        ['layer4.1.conv2', 'layer4.1.bn2']
-    ]
-    fused_count = 0
-    for fuse_set in fuse_list:
-        try:
-            tq.fuse_modules(model, fuse_set, inplace=True)
-            fused_count += 1
-        except Exception as e:
-            print(f"  ⚠ Fusion warning for {fuse_set}: {str(e)[:50]}")
-    print(f"✓ Fused {fused_count}/{len(fuse_list)} module groups")
+# ----------------------------
+# 模块融合 (ResNet18 特定)
+# ----------------------------
+def fuse_model(model):
+    # 对BasicBlock做conv+bn+relu融合
+    for module_name, module in model.named_children():
+        if module_name == "layer1" or module_name == "layer2" or module_name == "layer3" or module_name == "layer4":
+            for block_name, block in module.named_children():
+                tq.fuse_modules(block, ['conv1', 'bn1', 'relu'], inplace=True)
+                tq.fuse_modules(block, ['conv2', 'bn2'], inplace=True)
     return model
 
-# ==================== 设置量化后端 ====================
-if 'fbgemm' in torch.backends.quantized.supported_engines:
-    torch.backends.quantized.engine = 'fbgemm'
-    print(f"✓ Using quantized engine: fbgemm")
-else:
-    torch.backends.quantized.engine = 'qnnpack'
-    print(f"✓ Using quantized engine: qnnpack")
+model_fp32 = fuse_model(model_fp32)
 
-# ==================== QAT 准备 ====================
-model_qat.train()  # ⚠ 必须在训练模式
-model_qat = fuse_resnet18(model_qat)
-model_qat.qconfig = tq.get_default_qat_qconfig(torch.backends.quantized.engine)
+# ----------------------------
+# QAT 配置 (FX模式 + 默认 fbgemm)
+# ----------------------------
+example_input = torch.randn(1,3,224,224)
+qconfig_mapping = tq.get_default_qat_qconfig_mapping('fbgemm')
+model_fp32.qconfig = tq.QConfig(
+    activation=tq.default_observer,
+    weight=tq.default_weight_observer
+)
+model_fp32 = quantize_fx.prepare_qat_fx(model_fp32, qconfig_mapping, example_inputs=example_input)
+model_fp32 = model_fp32.to(device)
 
-try:
-    model_prepared = tq.prepare_qat(model_qat, inplace=False).to(device)
-    print("✓ QAT preparation successful")
-except Exception as e:
-    print(f"❌ QAT preparation failed: {e}")
-    exit(1)
-
-# ==================== QAT 训练 ====================
+# ----------------------------
+# 损失函数、优化器、调度器
+# ----------------------------
 criterion = nn.CrossEntropyLoss()
-optimizer = optim.Adam(model_prepared.parameters(), lr=learning_rate)
-scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=5, gamma=0.5)
+optimizer = optim.Adam(model_fp32.parameters(), lr=learning_rate)
+scheduler = ReduceLROnPlateau(optimizer, mode='max', factor=0.5, patience=3, verbose=True)
 
-best_qat_acc = 0.0
-training_start = time.time()
-log_file = open("qat_training_log.txt", "w")
-
-for epoch in range(num_epochs):
-    epoch_start = time.time()
-    model_prepared.train()
-    running_loss = 0.0
-    correct, total = 0, 0
-    for batch_idx, (images, labels) in enumerate(train_loader):
+# ----------------------------
+# 训练函数
+# ----------------------------
+def train_one_epoch(model, loader, criterion, optimizer, epoch):
+    model.train()
+    running_loss = 0
+    correct = 0
+    total = 0
+    for images, labels in tqdm(loader, desc=f"Epoch {epoch}"):
         images, labels = images.to(device), labels.to(device)
         optimizer.zero_grad()
-        outputs = model_prepared(images)
+        outputs = model(images)
         loss = criterion(outputs, labels)
         loss.backward()
-        torch.nn.utils.clip_grad_norm_(model_prepared.parameters(), max_norm=1.0)
         optimizer.step()
-
-        running_loss += loss.item()
-        _, pred = outputs.max(1)
-        correct += pred.eq(labels).sum().item()
+        
+        running_loss += loss.item() * images.size(0)
+        _, predicted = outputs.max(1)
         total += labels.size(0)
+        correct += predicted.eq(labels).sum().item()
+    epoch_loss = running_loss / total
+    epoch_acc = 100. * correct / total
+    logging.info(f"Epoch {epoch}: Loss={epoch_loss:.4f}, Top1 Accuracy={epoch_acc:.2f}%")
+    return epoch_loss, epoch_acc
 
-        if batch_idx % 100 == 0:
-            print(f"Epoch {epoch+1} | Batch {batch_idx}/{len(train_loader)} | Loss: {loss.item():.4f}")
-            log_file.write(f"{time.time()} Epoch {epoch+1} Batch {batch_idx} Loss {loss.item():.4f}\n")
-
-    train_acc = 100.*correct/total
-
-    # 测试
-    model_prepared.eval()
-    correct_test, total_test = 0,0
+# ----------------------------
+# 测试函数
+# ----------------------------
+def evaluate(model, loader, criterion):
+    model.eval()
+    correct = 0
+    total = 0
+    running_loss = 0
     with torch.no_grad():
-        for images, labels in test_loader:
+        for images, labels in loader:
             images, labels = images.to(device), labels.to(device)
-            outputs = model_prepared(images)
-            _, pred = outputs.max(1)
-            correct_test += pred.eq(labels).sum().item()
-            total_test += labels.size(0)
-    test_acc = 100.*correct_test/total_test
+            outputs = model(images)
+            loss = criterion(outputs, labels)
+            running_loss += loss.item() * images.size(0)
+            _, predicted = outputs.max(1)
+            total += labels.size(0)
+            correct += predicted.eq(labels).sum().item()
+    acc = 100.* correct/total
+    loss = running_loss/total
+    return loss, acc
 
-    scheduler.step()
-    epoch_time = time.time() - epoch_start
-    print(f"Epoch {epoch+1} | Loss {running_loss/len(train_loader):.4f} | Train Acc {train_acc:.2f}% | Test Acc {test_acc:.2f}% | Time {epoch_time:.1f}s | LR {scheduler.get_last_lr()[0]:.6f}")
-    log_file.write(f"Epoch {epoch+1} | Train Acc {train_acc:.2f} | Test Acc {test_acc:.2f}\n")
+# ----------------------------
+# 主训练流程
+# ----------------------------
+best_acc = 0
+patience_counter = 0
+early_stop_patience = 5
 
-    if test_acc > best_qat_acc:
-        best_qat_acc = test_acc
-        torch.save(model_prepared.state_dict(), "models/resnet18_qat_best.pth")
-        print(f"✔ Saved best QAT checkpoint (Acc: {test_acc:.2f}%)")
+for epoch in range(1, epochs+1):
+    train_loss, train_acc = train_one_epoch(model_fp32, train_loader, criterion, optimizer, epoch)
+    test_loss, test_acc = evaluate(model_fp32, test_loader, criterion)
+    logging.info(f"Validation: Loss={test_loss:.4f}, Top1 Accuracy={test_acc:.2f}%")
+    
+    scheduler.step(test_acc)  # 调整学习率
+    
+    # 早停 + 保存最佳模型
+    if test_acc > best_acc:
+        best_acc = test_acc
+        patience_counter = 0
+        torch.save(model_fp32.state_dict(), "qat_resnet18_best.pth")
+        logging.info(f"New best model saved with accuracy {best_acc:.2f}%")
+    else:
+        patience_counter += 1
+        if patience_counter >= early_stop_patience:
+            logging.info(f"Early stopping triggered after {epoch} epochs")
+            break
 
-log_file.close()
-total_time = time.time()-training_start
-print(f"\n✓ QAT Training completed in {total_time/60:.1f} minutes")
-print(f"✓ Best QAT Test Acc: {best_qat_acc:.2f}%")
+# ----------------------------
+# 加载最佳模型并转换为 INT8
+# ----------------------------
+model_fp32.load_state_dict(torch.load("qat_resnet18_best.pth"))
+model_fp32.eval()
+model_fp32.to('cpu')
+model_int8 = tq.convert(model_fp32)
 
-# ==================== INT8 转换 ====================
-print("\n=== Converting to INT8 ===")
-model_prepared.eval()
-model_prepared.to('cpu')
+# ----------------------------
+# INT8 模型评估
+# ----------------------------
+int8_loss, int8_acc = evaluate(model_int8, test_loader, criterion)
+logging.info(f"INT8 Model Accuracy: {int8_acc:.2f}%")
+logging.info(f"Accuracy Drop: {best_acc - int8_acc:.2f}%")
 
-try:
-    model_int8 = tq.convert(model_prepared, inplace=False)
-    print("✓ INT8 conversion successful")
-except Exception as e:
-    print(f"❌ INT8 conversion failed: {e}")
-    exit(1)
-
-# ==================== INT8 测试 ====================
-correct_int8, total_int8 = 0,0
-inference_start = time.time()
-with torch.no_grad():
-    for batch_idx, (images, labels) in enumerate(test_loader):
-        images, labels = images.to('cpu'), labels.to('cpu')
-        outputs = model_int8(images)
-        _, pred = outputs.max(1)
-        correct_int8 += pred.eq(labels).sum().item()
-        total_int8 += labels.size(0)
-int8_acc = 100.*correct_int8/total_int8
-inference_time = time.time() - inference_start
-print(f"✓ INT8 Test Acc: {int8_acc:.2f}% | Inference time: {inference_time:.2f}s | Avg {inference_time/total_int8*1000:.2f}ms/img")
-
-torch.save(model_int8.state_dict(), "models/resnet18_int8_final.pth")
-print("✓ INT8 model saved to models/resnet18_int8_final.pth")
-
-# ==================== 模型大小对比 ====================
-fp32_size = os.path.getsize("models/resnet18_fp32.pth")/(1024*1024)
-qat_size = os.path.getsize("models/resnet18_qat_best.pth")/(1024*1024)
-int8_size = os.path.getsize("models/resnet18_int8_final.pth")/(1024*1024)
-print("\n" + "="*60)
-print("MODEL SIZE COMPARISON")
-print("="*60)
-print(f"{'Model':<20} {'Size(MB)':<15} {'Ratio':<10}")
-print(f"{'FP32':<20} {fp32_size:<15.2f} {'1.00x':<10}")
-print(f"{'QAT (FP32)':<20} {qat_size:<15.2f} {fp32_size/qat_size:<5.2f}x")
-print(f"{'INT8':<20} {int8_size:<15.2f} {fp32_size/int8_size:<5.2f}x")
-print(f"\nAccuracy Summary:")
-print(f"  FP32 Baseline: (请从训练日志获取)")
-print(f"  QAT Best: {best_qat_acc:.2f}%")
-print(f"  INT8 Final: {int8_acc:.2f}%")
-print(f"  Accuracy drop: {best_qat_acc-int8_acc:.2f}%")
-print("="*60)
-print("Training Completed Successfully!")
+# ----------------------------
+# 保存完整 INT8 模型配置
+# ----------------------------
+torch.save({
+    'model_state_dict': model_int8.state_dict(),
+    'model_architecture': 'resnet18',
+    'input_size': (3,224,224),
+    'num_classes': num_classes,
+    'qat_config': 'fbgemm'
+}, "qat_resnet18_complete.pth")
