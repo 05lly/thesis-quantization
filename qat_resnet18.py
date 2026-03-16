@@ -1,4 +1,4 @@
-# qat_resnet18_fixed_v4.py
+# qat_resnet18_test.py
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -73,11 +73,11 @@ tq.prepare_qat(model, inplace=True)
 model.to(device)
 
 # -------------------------------
-# 优化器设置
+# 优化器设置 - 测试用少量epochs
 # -------------------------------
 criterion = nn.CrossEntropyLoss()
-optimizer = optim.SGD(model.parameters(), lr=0.0001, momentum=0.9, weight_decay=1e-4)
-scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=30)
+optimizer = optim.SGD(model.parameters(), lr=0.001, momentum=0.9, weight_decay=1e-4)  # 提高学习率
+scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=5)
 
 # -------------------------------
 # 训练函数
@@ -113,15 +113,19 @@ def train_one_epoch(epoch):
     
     return running_loss/total, 100.*correct/total
 
-def validate(model, loader):
+def validate(model, loader, device_override=None):
+    """验证函数，可以指定设备"""
     model.eval()
     running_loss = 0.0
     correct = 0
     total = 0
     
+    # 确定使用哪个设备
+    eval_device = device_override if device_override else next(model.parameters()).device
+    
     with torch.no_grad():
         for inputs, targets in loader:
-            inputs, targets = inputs.to(device), targets.to(device)
+            inputs, targets = inputs.to(eval_device), targets.to(eval_device)
             outputs = model(inputs)
             loss = criterion(outputs, targets)
             
@@ -133,12 +137,12 @@ def validate(model, loader):
     return running_loss/total, 100.*correct/total
 
 # -------------------------------
-# 训练循环
+# 训练循环 - 只跑3个epochs测试
 # -------------------------------
 best_acc = 0
-num_epochs = 10  # 增加到10个epoch
+num_epochs = 3  # 测试用只跑3个epoch
 
-logger.info("Starting QAT training...")
+logger.info("Starting QAT training (test mode - 3 epochs)...")
 for epoch in range(1, num_epochs+1):
     train_loss, train_acc = train_one_epoch(epoch)
     val_loss, val_acc = validate(model, test_loader)
@@ -148,7 +152,6 @@ for epoch in range(1, num_epochs+1):
     
     if val_acc > best_acc:
         best_acc = val_acc
-        # 保存训练好的QAT模型
         torch.save(model.state_dict(), "best_qat_model_weights.pth")
         logger.info(f"New best model saved with accuracy {best_acc:.2f}%")
     
@@ -159,85 +162,62 @@ for epoch in range(1, num_epochs+1):
 # -------------------------------
 logger.info("Converting to INT8...")
 
-# 方法1：直接使用训练好的模型（最简单）
-logger.info("Method 1: Converting trained model directly...")
+# 重要：INT8模型必须在CPU上运行
+model = model.to('cpu')
 model.eval()
-model.to('cpu')
-model_int8 = tq.convert(model)
 
-# 验证INT8模型
-val_loss, val_acc = validate(model_int8, test_loader)
-logger.info(f"INT8 Model (direct) - Loss: {val_loss:.4f}, Acc: {val_acc:.2f}%")
-logger.info(f"Accuracy drop: {best_acc - val_acc:.2f}%")
-
-# 保存INT8模型
-torch.save(model_int8.state_dict(), "resnet18_int8_direct.pth")
-
-# 方法2：重新创建模型并加载权重（如果需要）
-logger.info("Method 2: Creating new model and loading weights...")
-
-def create_model_for_conversion():
-    # 创建新模型
-    new_model = create_model()
-    new_model = fuse_model(new_model)
+try:
+    # 转换模型到INT8
+    model_int8 = tq.convert(model)
+    logger.info("✓ Model converted to INT8 successfully")
     
-    # 设置为训练模式进行prepare_qat
-    new_model.train()
-    new_model.qconfig = tq.get_default_qat_qconfig('fbgemm')
-    tq.prepare_qat(new_model, inplace=True)
+    # 验证INT8模型（在CPU上）
+    logger.info("Validating INT8 model on CPU...")
+    val_loss, val_acc = validate(model_int8, test_loader, device_override='cpu')
+    logger.info(f"INT8 Model - Loss: {val_loss:.4f}, Acc: {val_acc:.2f}%")
+    logger.info(f"Accuracy drop: {best_acc - val_acc:.2f}%")
     
-    # 加载训练好的权重
-    new_model.load_state_dict(torch.load("best_qat_model_weights.pth"))
+    # 保存INT8模型
+    torch.save(model_int8.state_dict(), "resnet18_int8.pth")
+    logger.info("✓ INT8 model saved")
     
-    # 切换到eval模式进行转换
-    new_model.eval()
-    new_model.to('cpu')
-    return new_model
+except Exception as e:
+    logger.error(f"Error during INT8 conversion: {e}")
+    logger.info("Trying alternative conversion method...")
+    
+    # 备选方案：重新创建模型
+    try:
+        model_cpu = create_model()
+        model_cpu = fuse_model(model_cpu)
+        model_cpu.train()
+        model_cpu.qconfig = tq.get_default_qat_qconfig('fbgemm')
+        tq.prepare_qat(model_cpu, inplace=True)
+        model_cpu.load_state_dict(torch.load("best_qat_model_weights.pth"))
+        model_cpu.eval()
+        model_cpu.to('cpu')
+        
+        model_int8 = tq.convert(model_cpu)
+        
+        val_loss, val_acc = validate(model_int8, test_loader, device_override='cpu')
+        logger.info(f"INT8 Model (alt) - Loss: {val_loss:.4f}, Acc: {val_acc:.2f}%")
+        
+        torch.save(model_int8.state_dict(), "resnet18_int8_alt.pth")
+        logger.info("✓ Alternative INT8 model saved")
+        
+    except Exception as e2:
+        logger.error(f"Alternative conversion also failed: {e2}")
 
-# 创建新模型并转换
-new_model = create_model_for_conversion()
-new_model_int8 = tq.convert(new_model)
+logger.info("Test run completed!")
 
-# 验证新INT8模型
-val_loss2, val_acc2 = validate(new_model_int8, test_loader)
-logger.info(f"INT8 Model (new) - Loss: {val_loss2:.4f}, Acc: {val_acc2:.2f}%")
-
-# 保存第二个INT8模型
-torch.save(new_model_int8.state_dict(), "resnet18_int8_new.pth")
-
+# -------------------------------
 # 保存模型信息
+# -------------------------------
 model_info = {
     'model_architecture': 'resnet18_qat_int8',
     'input_size': (3, 224, 224),
     'num_classes': 10,
-    'accuracy_direct': val_acc,
-    'accuracy_new': val_acc2,
-    'best_fp32_acc': best_acc
+    'best_fp32_acc': best_acc,
+    'num_epochs_trained': num_epochs,
+    'test_mode': True
 }
 torch.save(model_info, "resnet18_int8_info.pth")
-
-logger.info("Training and quantization completed successfully!")
-
-# -------------------------------
-# 快速测试
-# -------------------------------
-def quick_test():
-    """快速测试模型是否能正常运行"""
-    logger.info("Running quick test...")
-    
-    # 测试直接转换的模型
-    test_model = model_int8
-    test_input = torch.randn(1, 3, 224, 224)
-    with torch.no_grad():
-        output = test_model(test_input)
-    logger.info(f"Direct model test passed! Output shape: {output.shape}")
-    
-    # 测试新创建的模型
-    test_model2 = new_model_int8
-    with torch.no_grad():
-        output2 = test_model2(test_input)
-    logger.info(f"New model test passed! Output shape: {output2.shape}")
-    
-    return True
-
-quick_test()
