@@ -1,3 +1,5 @@
+# 文件名：qat_resnet18_local.py
+
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -32,13 +34,14 @@ logging.getLogger('').addHandler(console)
 batch_size = 128
 epochs = 15
 learning_rate = 1e-3
-num_classes = 10  # 根据你数据集修改
+num_classes = 10  # CIFAR-10
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 logging.info(f"Training on device: {device}")
 
 # ----------------------------
-# 数据集与预处理
+# 数据集与预处理（本地）
 # ----------------------------
+data_root = './data'  # 你的 cifar-10-batches-py 所在目录
 transform_train = transforms.Compose([
     transforms.Resize((224, 224)),
     transforms.ToTensor(),
@@ -52,8 +55,9 @@ transform_test = transforms.Compose([
                          std=[0.229, 0.224, 0.225])
 ])
 
-train_dataset = datasets.CIFAR10(root='./data', train=True, download=True, transform=transform_train)
-test_dataset = datasets.CIFAR10(root='./data', train=False, download=True, transform=transform_test)
+train_dataset = datasets.CIFAR10(root=data_root, train=True, download=False, transform=transform_train)
+test_dataset = datasets.CIFAR10(root=data_root, train=False, download=False, transform=transform_test)
+
 train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=4)
 test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=4)
 
@@ -67,9 +71,8 @@ model_fp32.fc = nn.Linear(model_fp32.fc.in_features, num_classes)
 # 模块融合 (ResNet18 特定)
 # ----------------------------
 def fuse_model(model):
-    # 对BasicBlock做conv+bn+relu融合
     for module_name, module in model.named_children():
-        if module_name == "layer1" or module_name == "layer2" or module_name == "layer3" or module_name == "layer4":
+        if module_name in ["layer1", "layer2", "layer3", "layer4"]:
             for block_name, block in module.named_children():
                 tq.fuse_modules(block, ['conv1', 'bn1', 'relu'], inplace=True)
                 tq.fuse_modules(block, ['conv2', 'bn2'], inplace=True)
