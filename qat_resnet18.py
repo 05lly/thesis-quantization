@@ -1,8 +1,9 @@
+# qat_resnet18_working.py
 import torch
 import torch.nn as nn
 import torch.optim as optim
 import torch.ao.quantization as tq
-from torchvision import datasets, transforms, models
+from torchvision import datasets, transforms
 from tqdm import tqdm
 import os
 import logging
@@ -13,25 +14,14 @@ warnings.filterwarnings('ignore')
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# 优先使用GPU训练，量化强制用CPU
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 logger.info(f"Training on device: {device}")
 logger.info(f"PyTorch version: {torch.__version__}")
-logger.info(f"Quantization will be performed on CPU (required for fbgemm)")
 
 # -------------------------------
-# 数据集准备（兼容Linux/Windows路径）
+# 数据集准备
 # -------------------------------
-# 根据环境自动适配路径
-if os.path.exists('/root/autodl-tmp/thesis-quantization/data'):
-    data_root = '/root/autodl-tmp/thesis-quantization/data'  # Linux/Autodl
-else:
-    data_root = r'D:\Graduation_Design\thesis-quantization\data'  # Windows
-
-# 数据加载参数（Windows下num_workers=0）
-num_workers = 4 if os.name != 'nt' else 0
-pin_memory = True if device.type == 'cuda' else False
-
+data_root = '/root/autodl-tmp/thesis-quantization/data'
 transform_train = transforms.Compose([
     transforms.Resize(224),
     transforms.RandomHorizontalFlip(),
@@ -49,57 +39,133 @@ train_dataset = datasets.CIFAR10(root=data_root, train=True, download=False, tra
 test_dataset = datasets.CIFAR10(root=data_root, train=False, download=False, transform=transform_test)
 
 train_loader = torch.utils.data.DataLoader(
-    train_dataset, batch_size=32, shuffle=True, num_workers=num_workers, pin_memory=pin_memory
+    train_dataset, batch_size=32, shuffle=True, num_workers=4, pin_memory=True
 )
 test_loader = torch.utils.data.DataLoader(
-    test_dataset, batch_size=32, shuffle=False, num_workers=num_workers, pin_memory=pin_memory
+    test_dataset, batch_size=32, shuffle=False, num_workers=4, pin_memory=True
 )
 
 # -------------------------------
-# 模型定义（添加量化节点）
+# 可量化的BasicBlock（完整修复）
 # -------------------------------
+class QuantizableBasicBlock(nn.Module):
+    """完全可量化的BasicBlock"""
+    expansion = 1
+
+    def __init__(self, inplanes, planes, stride=1, downsample=None):
+        super().__init__()
+        self.conv1 = nn.Conv2d(inplanes, planes, kernel_size=3, stride=stride, padding=1, bias=False)
+        self.bn1 = nn.BatchNorm2d(planes)
+        self.relu1 = nn.ReLU(inplace=False)
+        self.conv2 = nn.Conv2d(planes, planes, kernel_size=3, stride=1, padding=1, bias=False)
+        self.bn2 = nn.BatchNorm2d(planes)
+        self.relu2 = nn.ReLU(inplace=False)
+        self.downsample = downsample
+        self.stride = stride
+        
+        # 用于量化残差连接的节点
+        self.skip_add = nn.quantized.FloatFunctional()
+
+    def forward(self, x):
+        identity = x
+
+        out = self.conv1(x)
+        out = self.bn1(out)
+        out = self.relu1(out)
+
+        out = self.conv2(out)
+        out = self.bn2(out)
+
+        if self.downsample is not None:
+            identity = self.downsample(x)
+
+        # 使用FloatFunctional进行安全的加法操作（解决aten::add.out错误）
+        out = self.skip_add.add_relu(out, identity)
+
+        return out
+
 class QuantizableResNet18(nn.Module):
     def __init__(self, num_classes=10):
         super().__init__()
-        self.model = models.resnet18(weights=models.ResNet18_Weights.IMAGENET1K_V1)
-        self.model.fc = nn.Linear(self.model.fc.in_features, num_classes)
+        self.inplanes = 64
         
-        # 必须添加量化/反量化节点（解决conv2d.new错误的核心）
+        # 第一层
+        self.conv1 = nn.Conv2d(3, 64, kernel_size=7, stride=2, padding=3, bias=False)
+        self.bn1 = nn.BatchNorm2d(64)
+        self.relu = nn.ReLU(inplace=False)
+        self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
+        
+        # 残差层
+        self.layer1 = self._make_layer(QuantizableBasicBlock, 64, 2)
+        self.layer2 = self._make_layer(QuantizableBasicBlock, 128, 2, stride=2)
+        self.layer3 = self._make_layer(QuantizableBasicBlock, 256, 2, stride=2)
+        self.layer4 = self._make_layer(QuantizableBasicBlock, 512, 2, stride=2)
+        
+        # 分类头
+        self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
+        self.fc = nn.Linear(512, num_classes)
+        
+        # 量化节点
         self.quant = tq.QuantStub()
         self.dequant = tq.DeQuantStub()
 
+    def _make_layer(self, block, planes, blocks, stride=1):
+        downsample = None
+        if stride != 1 or self.inplanes != planes:
+            downsample = nn.Sequential(
+                nn.Conv2d(self.inplanes, planes, kernel_size=1, stride=stride, bias=False),
+                nn.BatchNorm2d(planes),
+            )
+
+        layers = []
+        layers.append(block(self.inplanes, planes, stride, downsample))
+        self.inplanes = planes
+        for _ in range(1, blocks):
+            layers.append(block(self.inplanes, planes))
+
+        return nn.Sequential(*layers)
+
     def forward(self, x):
         x = self.quant(x)
-        x = self.model(x)
+        
+        x = self.conv1(x)
+        x = self.bn1(x)
+        x = self.relu(x)
+        x = self.maxpool(x)
+
+        x = self.layer1(x)
+        x = self.layer2(x)
+        x = self.layer3(x)
+        x = self.layer4(x)
+
+        x = self.avgpool(x)
+        x = torch.flatten(x, 1)
+        x = self.fc(x)
+        
         x = self.dequant(x)
         return x
 
     def fuse_model(self):
-        """安全的层融合，避免报错"""
-        self.model.eval()
-        for module_name, module in self.model.named_children():
-            if "layer" in module_name:
-                for bb_name, basic_block in module.named_children():
-                    try:
-                        tq.fuse_modules(basic_block, [['conv1', 'bn1', 'relu']], inplace=True)
-                    except:
-                        pass
-                    try:
-                        tq.fuse_modules(basic_block, [['conv2', 'bn2']], inplace=True)
-                    except:
-                        pass
+        """安全的层融合"""
+        # 融合第一层
+        tq.fuse_modules(self, [['conv1', 'bn1', 'relu']], inplace=True)
+        
+        # 融合残差块
+        for module_name in ['layer1', 'layer2', 'layer3', 'layer4']:
+            layer = getattr(self, module_name)
+            for basic_block in layer:
+                # 融合conv1, bn1, relu1
+                tq.fuse_modules(basic_block, [['conv1', 'bn1', 'relu1']], inplace=True)
+                # 融合conv2, bn2
+                tq.fuse_modules(basic_block, [['conv2', 'bn2']], inplace=True)
+        
         return self
 
-def create_model():
-    """创建基础模型（训练用）"""
-    model = QuantizableResNet18(num_classes=10)
-    return model
-
 # -------------------------------
-# 训练函数（GPU加速）
+# 训练函数
 # -------------------------------
 def train_model():
-    model = create_model()
+    model = QuantizableResNet18(num_classes=10)
     model.to(device)
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.SGD(model.parameters(), lr=0.001, momentum=0.9, weight_decay=1e-4)
@@ -108,7 +174,6 @@ def train_model():
     best_acc = 0
     
     for epoch in range(1, 4):
-        # 训练阶段
         model.train()
         running_loss = 0.0
         correct = 0
@@ -136,7 +201,7 @@ def train_model():
         
         train_acc = 100. * correct / total
         
-        # 验证阶段
+        # 验证
         model.eval()
         val_correct = 0
         val_total = 0
@@ -153,15 +218,15 @@ def train_model():
         
         if val_acc > best_acc:
             best_acc = val_acc
-            # 安全保存（先移到CPU，避免GPU张量问题）
+            # 保存到CPU
             model_cpu = model.to('cpu')
             torch.save(model_cpu.state_dict(), "best_model.pth")
-            model.to(device)  # 移回GPU继续训练
+            model.to(device)
     
     return best_acc
 
 # -------------------------------
-# 量化函数（纯CPU执行，解决conv2d.new错误）
+# 量化函数（使用FloatFunctional）
 # -------------------------------
 def quantize_model():
     logger.info("\n" + "="*50)
@@ -169,11 +234,10 @@ def quantize_model():
     logger.info("="*50)
     
     try:
-        # 1. 纯CPU加载模型（关键！）
+        # 1. 加载模型到CPU
         logger.info("1. Loading model to CPU...")
-        model = create_model()
-        # 强制加载到CPU，避免设备不匹配
-        state_dict = torch.load("best_model.pth", map_location=torch.device('cpu'))
+        model = QuantizableResNet18(num_classes=10)
+        state_dict = torch.load("best_model.pth", map_location='cpu')
         model.load_state_dict(state_dict)
         model.eval()
         
@@ -181,44 +245,40 @@ def quantize_model():
         logger.info("2. Fusing modules...")
         model = model.fuse_model()
         
-        # 3. 设置fbgemm量化配置（适配你的环境）
-        logger.info("3. Setting fbgemm quantization config...")
+        # 3. 设置量化配置
+        logger.info("3. Setting quantization config...")
         model.qconfig = tq.get_default_qconfig('fbgemm')
         
-        # 4. 准备量化（不要用inplace=True）
+        # 4. 准备量化
         logger.info("4. Preparing model for quantization...")
         model_prepared = tq.prepare(model, inplace=False)
         
-        # 5. 校准（用少量数据，纯CPU）
-        logger.info("5. Calibrating with test data (10 batches)...")
+        # 5. 校准
+        logger.info("5. Calibrating with test data...")
         model_prepared.eval()
         with torch.no_grad():
             for i, (inputs, _) in enumerate(test_loader):
-                if i >= 10:  # 只用10个batch校准，节省时间
+                if i >= 10:
                     break
-                # 强制输入在CPU
-                model_prepared(inputs.to('cpu'))
+                model_prepared(inputs)
         
-        # 6. 转换为INT8（核心步骤）
+        # 6. 转换为INT8
         logger.info("6. Converting to INT8...")
         model_int8 = tq.convert(model_prepared, inplace=False)
         
-        # 7. 测试INT8模型
+        # 7. 测试
         logger.info("7. Testing INT8 model...")
-        test_input = torch.randn(1, 3, 224, 224).to('cpu')
+        test_input = torch.randn(1, 3, 224, 224)
         with torch.no_grad():
             output = model_int8(test_input)
         logger.info(f"✓ INT8 model output shape: {output.shape}")
         
-        # 8. 验证INT8精度
+        # 8. 验证精度
         logger.info("8. Validating INT8 model accuracy...")
         correct = 0
         total = 0
-        model_int8.eval()
         with torch.no_grad():
             for inputs, targets in test_loader:
-                # 所有数据强制在CPU
-                inputs, targets = inputs.to('cpu'), targets.to('cpu')
                 outputs = model_int8(inputs)
                 _, predicted = outputs.max(1)
                 total += targets.size(0)
@@ -227,9 +287,9 @@ def quantize_model():
         int8_acc = 100. * correct / total
         logger.info(f"✓ INT8 model accuracy: {int8_acc:.2f}%")
         
-        # 9. 保存INT8模型
+        # 9. 保存
         torch.save(model_int8.state_dict(), "resnet18_int8_final.pth")
-        logger.info("✓ INT8 model saved as 'resnet18_int8_final.pth'")
+        logger.info("✓ INT8 model saved successfully!")
         
         return model_int8, int8_acc
         
@@ -243,11 +303,11 @@ def quantize_model():
 # 主程序
 # -------------------------------
 if __name__ == "__main__":
-    # 1. GPU训练模型
+    # 训练
     best_acc = train_model()
     logger.info(f"\nBest FP32 accuracy: {best_acc:.2f}%")
     
-    # 2. CPU量化模型
+    # 量化
     model_int8, int8_acc = quantize_model()
     
     if model_int8 is not None:
@@ -256,4 +316,4 @@ if __name__ == "__main__":
         logger.info(f"INT8 accuracy: {int8_acc:.2f}%")
         logger.info(f"Accuracy drop: {best_acc - int8_acc:.2f}%")
     
-    logger.info("\nAll tasks completed successfully!")
+    logger.info("\nAll tasks completed!")
