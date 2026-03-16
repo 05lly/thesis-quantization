@@ -30,16 +30,16 @@ logging.getLogger('').addHandler(console)
 # 超参数
 # ----------------------------
 batch_size = 128
-epochs = 15
+epochs = 15  # 可以先跑15，后续可延长
 learning_rate = 1e-3
-num_classes = 10  # CIFAR-10
+num_classes = 10
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 logging.info(f"Training on device: {device}")
 
 # ----------------------------
-# 数据集与预处理（本地）
+# 数据集与预处理
 # ----------------------------
-data_root = '/root/autodl-tmp/thesis-quantization/data'  # 指向服务器本地路径
+data_root = '/root/autodl-tmp/thesis-quantization/data'  # 指向服务器本地 CIFAR-10
 transform_train = transforms.Compose([
     transforms.Resize((224, 224)),
     transforms.ToTensor(),
@@ -67,6 +67,7 @@ model_fp32.fc = nn.Linear(model_fp32.fc.in_features, num_classes)
 # 模块融合 (ResNet18 特定)
 # ----------------------------
 def fuse_model(model):
+    model.eval()  # eval 模式才能融合
     for module_name, module in model.named_children():
         if module_name in ["layer1", "layer2", "layer3", "layer4"]:
             for block_name, block in module.named_children():
@@ -74,7 +75,6 @@ def fuse_model(model):
                 tq.fuse_modules(block, ['conv2', 'bn2'], inplace=True)
     return model
 
-model_fp32.eval()  # 关键：eval模式才能融合
 model_fp32 = fuse_model(model_fp32)
 
 # ----------------------------
@@ -96,7 +96,7 @@ model_fp32.train()  # QAT训练需要回到train模式
 # ----------------------------
 criterion = nn.CrossEntropyLoss()
 optimizer = optim.Adam(model_fp32.parameters(), lr=learning_rate)
-scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', factor=0.5, patience=3, verbose=True)
+scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', factor=0.5, patience=3)
 
 # ----------------------------
 # 训练与验证函数
@@ -158,7 +158,8 @@ for epoch in range(1, epochs+1):
     if test_acc > best_acc:
         best_acc = test_acc
         patience_counter = 0
-        torch.save(model_fp32.state_dict(), "qat_resnet18_best.pth")
+        # ✅ 保存完整 QAT 模型，保留 observer
+        torch.save(model_fp32, "qat_resnet18_qat.pth")
         logging.info(f"New best model saved with accuracy {best_acc:.2f}%")
     else:
         patience_counter += 1
@@ -169,9 +170,8 @@ for epoch in range(1, epochs+1):
 # ----------------------------
 # 加载最佳模型并转换为 INT8
 # ----------------------------
-model_fp32.load_state_dict(torch.load("qat_resnet18_best.pth"))
+model_fp32 = torch.load("qat_resnet18_qat.pth")
 model_fp32.eval()
-model_fp32.to('cpu')
 model_int8 = tq.convert(model_fp32)
 
 int8_loss, int8_acc = evaluate(model_int8, test_loader, criterion)
