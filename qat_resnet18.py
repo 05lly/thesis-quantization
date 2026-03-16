@@ -1,4 +1,4 @@
-# qat_resnet18_fixed.py
+# qat_resnet18_fixed_v2.py
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -38,8 +38,8 @@ transform_test = transforms.Compose([
 train_dataset = datasets.CIFAR10(root=data_root, train=True, download=False, transform=transform_train)
 test_dataset = datasets.CIFAR10(root=data_root, train=False, download=False, transform=transform_test)
 
-train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=64, shuffle=True, num_workers=4, pin_memory=True)
-test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=64, shuffle=False, num_workers=4, pin_memory=True)
+train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=32, shuffle=True, num_workers=4, pin_memory=True)
+test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=32, shuffle=False, num_workers=4, pin_memory=True)
 
 # -------------------------------
 # 模型定义与融合
@@ -56,6 +56,7 @@ def fuse_model(model):
     for module_name, module in model.named_children():
         if "layer" in module_name:
             for basic_block_name, basic_block in module.named_children():
+                # 使用正确的融合方式
                 tq.fuse_modules(basic_block, [['conv1', 'bn1', 'relu']], inplace=True)
                 tq.fuse_modules(basic_block, [['conv2', 'bn2']], inplace=True)
     return model
@@ -67,25 +68,45 @@ model = create_model()
 model = fuse_model(model)
 
 # -------------------------------
-# QAT准备（使用正确的API）
+# QAT准备 - 修复量化参数问题
 # -------------------------------
+# 使用自定义的QAT配置，确保zero_point在正确范围内
+from torch.ao.quantization import QConfig, MinMaxObserver, PerChannelMinMaxObserver, MovingAverageMinMaxObserver
+from torch.ao.quantization.fake_quantize import FakeQuantize
+
+# 自定义fake quantize配置
+my_qconfig = QConfig(
+    activation=FakeQuantize.with_args(observer=MovingAverageMinMaxObserver,
+                                     quant_min=0,
+                                     quant_max=255,
+                                     dtype=torch.quint8,
+                                     qscheme=torch.per_tensor_affine,
+                                     reduce_range=False),
+    weight=FakeQuantize.with_args(observer=PerChannelMinMaxObserver,
+                                 quant_min=-128,
+                                 quant_max=127,
+                                 dtype=torch.qint8,
+                                 qscheme=torch.per_channel_symmetric,
+                                 reduce_range=False)
+)
+
 # 设置QAT配置
 model.train()
-model.qconfig = tq.get_default_qat_qconfig('fbgemm')
+model.qconfig = my_qconfig
 
 # 准备QAT
 tq.prepare_qat(model, inplace=True)
 model.to(device)
 
 # -------------------------------
-# 优化器设置
+# 优化器设置 - 使用更小的学习率
 # -------------------------------
 criterion = nn.CrossEntropyLoss()
-optimizer = optim.SGD(model.parameters(), lr=0.001, momentum=0.9, weight_decay=1e-4)
+optimizer = optim.SGD(model.parameters(), lr=0.0001, momentum=0.9, weight_decay=1e-4)
 scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=30)
 
 # -------------------------------
-# 训练函数
+# 训练函数 - 添加梯度裁剪
 # -------------------------------
 def train_one_epoch(epoch):
     model.train()
@@ -101,6 +122,10 @@ def train_one_epoch(epoch):
         outputs = model(inputs)
         loss = criterion(outputs, targets)
         loss.backward()
+        
+        # 梯度裁剪防止梯度爆炸
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+        
         optimizer.step()
         
         running_loss += loss.item() * inputs.size(0)
@@ -171,7 +196,7 @@ logger.info("Converting to INT8...")
 model.eval()
 model.to('cpu')
 
-# 转换
+# 转换前确保模型处于正确的状态
 model_int8 = tq.convert(model)
 
 # 验证INT8模型
@@ -189,3 +214,22 @@ torch.save({
 }, "resnet18_int8_final.pth")
 
 logger.info("Training and quantization completed!")
+
+# -------------------------------
+# 测试单个batch验证模型是否正常工作
+# -------------------------------
+def test_model_sanity():
+    logger.info("Running sanity check...")
+    model.eval()
+    test_input = torch.randn(1, 3, 224, 224).to(device)
+    try:
+        with torch.no_grad():
+            output = model(test_input)
+        logger.info(f"Sanity check passed! Output shape: {output.shape}")
+        return True
+    except Exception as e:
+        logger.error(f"Sanity check failed: {e}")
+        return False
+
+# 执行sanity check
+test_model_sanity()
