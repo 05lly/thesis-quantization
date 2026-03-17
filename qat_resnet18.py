@@ -1,47 +1,69 @@
-# train_resnet18_full.py
 import torch
 import torch.nn as nn
 import torch.optim as optim
-import torch.ao.quantization as tq
+import torch.ao.quantization as quant
 from torchvision import datasets, transforms
-from tqdm import tqdm
+from torchvision.models.quantization import resnet18
+from torch.utils.data import DataLoader
 import os
-import logging
-import json
 import time
-from datetime import datetime
-import warnings
-warnings.filterwarnings('ignore')
+import datetime
+from tqdm import tqdm
 
-# 设置日志
-log_filename = f"logs/training_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler(log_filename),
-        logging.StreamHandler()
-    ]
-)
-logger = logging.getLogger(__name__)
-
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-logger.info(f"Training on device: {device}")
-logger.info(f"PyTorch version: {torch.__version__}")
-logger.info(f"Log file: {log_filename}")
-
-# 记录开始时间
-start_time = time.time()
-
-# -------------------------------
-# 数据集准备
-# -------------------------------
+# -----------------------------
+# 基础配置
+# -----------------------------
+# 数据集路径
 data_root = '/root/autodl-tmp/thesis-quantization/data'
+# 训练配置（测试用）
+batch_size = 128
+epochs = 3        
+lr = 0.0001       
+lr_step_size = 1  
+lr_gamma = 0.5      
+# 保存路径
+log_dir = "logs"
+model_dir = "models"
+os.makedirs(log_dir, exist_ok=True)
+os.makedirs(model_dir, exist_ok=True)
+
+# 设备配置
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+# 日志文件命名
+log_filename = os.path.join(log_dir, f"qat_training_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.txt")
+
+# -----------------------------
+# 日志记录函数
+# -----------------------------
+def write_log(content):
+    """写入日志到文本文件，同时打印到控制台"""
+    current_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    log_content = f"[{current_time}] {content}"
+    print(log_content)
+    with open(log_filename, 'a', encoding='utf-8') as f:
+        f.write(log_content + "\n")
+
+# -----------------------------
+# 初始化日志
+# -----------------------------
+write_log("="*80)
+write_log("ResNet18 QAT训练（CIFAR10）")
+write_log(f"数据集路径: {data_root}")
+write_log(f"训练设备: {device}")
+write_log(f"Batch Size: {batch_size}")
+write_log(f"训练轮数: {epochs}")
+write_log(f"学习率: {lr}")
+write_log(f"学习率衰减步长: {lr_step_size}, 衰减系数: {lr_gamma}")
+write_log("="*80)
+
+# -----------------------------
+# 数据集加载
+# -----------------------------
+write_log("\n[1/6] 加载CIFAR10数据集...")
 transform_train = transforms.Compose([
     transforms.Resize(224),
     transforms.RandomHorizontalFlip(),
-    transforms.RandomRotation(10),
-    transforms.ColorJitter(brightness=0.2, contrast=0.2),
+    transforms.RandomCrop(224, padding=4),
     transforms.ToTensor(),
     transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
 ])
@@ -52,361 +74,243 @@ transform_test = transforms.Compose([
     transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
 ])
 
-train_dataset = datasets.CIFAR10(root=data_root, train=True, download=False, transform=transform_train)
-test_dataset = datasets.CIFAR10(root=data_root, train=False, download=False, transform=transform_test)
+try:
+    train_dataset = datasets.CIFAR10(
+        root=data_root,
+        train=True,
+        download=False,
+        transform=transform_train
+    )
+    test_dataset = datasets.CIFAR10(
+        root=data_root,
+        train=False,
+        download=False,
+        transform=transform_test
+    )
+    write_log(f"数据集加载成功 | 训练集数量: {len(train_dataset)} | 测试集数量: {len(test_dataset)}")
+except Exception as e:
+    write_log(f"数据集加载失败: {str(e)}")
+    raise
 
-train_loader = torch.utils.data.DataLoader(
-    train_dataset, batch_size=32, shuffle=True, num_workers=4, pin_memory=True
+train_loader = DataLoader(
+    train_dataset,
+    batch_size=batch_size,
+    shuffle=True,
+    num_workers=0,
+    pin_memory=True
 )
-test_loader = torch.utils.data.DataLoader(
-    test_dataset, batch_size=32, shuffle=False, num_workers=4, pin_memory=True
+
+test_loader = DataLoader(
+    test_dataset,
+    batch_size=batch_size,
+    shuffle=False,
+    num_workers=0,
+    pin_memory=True
 )
 
-# -------------------------------
-# 可量化的BasicBlock
-# -------------------------------
-class QuantizableBasicBlock(nn.Module):
-    expansion = 1
-
-    def __init__(self, inplanes, planes, stride=1, downsample=None):
-        super().__init__()
-        self.conv1 = nn.Conv2d(inplanes, planes, kernel_size=3, stride=stride, padding=1, bias=False)
-        self.bn1 = nn.BatchNorm2d(planes)
-        self.relu1 = nn.ReLU(inplace=False)
-        self.conv2 = nn.Conv2d(planes, planes, kernel_size=3, stride=1, padding=1, bias=False)
-        self.bn2 = nn.BatchNorm2d(planes)
-        self.relu2 = nn.ReLU(inplace=False)
-        self.downsample = downsample
-        self.stride = stride
-        self.skip_add = nn.quantized.FloatFunctional()
-
-    def forward(self, x):
-        identity = x
-
-        out = self.conv1(x)
-        out = self.bn1(out)
-        out = self.relu1(out)
-
-        out = self.conv2(out)
-        out = self.bn2(out)
-
-        if self.downsample is not None:
-            identity = self.downsample(x)
-
-        out = self.skip_add.add_relu(out, identity)
-        return out
-
-class QuantizableResNet18(nn.Module):
-    def __init__(self, num_classes=10):
-        super().__init__()
-        self.inplanes = 64
-        
-        self.conv1 = nn.Conv2d(3, 64, kernel_size=7, stride=2, padding=3, bias=False)
-        self.bn1 = nn.BatchNorm2d(64)
-        self.relu = nn.ReLU(inplace=False)
-        self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
-        
-        self.layer1 = self._make_layer(QuantizableBasicBlock, 64, 2)
-        self.layer2 = self._make_layer(QuantizableBasicBlock, 128, 2, stride=2)
-        self.layer3 = self._make_layer(QuantizableBasicBlock, 256, 2, stride=2)
-        self.layer4 = self._make_layer(QuantizableBasicBlock, 512, 2, stride=2)
-        
-        self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
-        self.fc = nn.Linear(512, num_classes)
-        
-        self.quant = tq.QuantStub()
-        self.dequant = tq.DeQuantStub()
-
-    def _make_layer(self, block, planes, blocks, stride=1):
-        downsample = None
-        if stride != 1 or self.inplanes != planes:
-            downsample = nn.Sequential(
-                nn.Conv2d(self.inplanes, planes, kernel_size=1, stride=stride, bias=False),
-                nn.BatchNorm2d(planes),
-            )
-
-        layers = []
-        layers.append(block(self.inplanes, planes, stride, downsample))
-        self.inplanes = planes
-        for _ in range(1, blocks):
-            layers.append(block(self.inplanes, planes))
-
-        return nn.Sequential(*layers)
-
-    def forward(self, x):
-        x = self.quant(x)
-        
-        x = self.conv1(x)
-        x = self.bn1(x)
-        x = self.relu(x)
-        x = self.maxpool(x)
-
-        x = self.layer1(x)
-        x = self.layer2(x)
-        x = self.layer3(x)
-        x = self.layer4(x)
-
-        x = self.avgpool(x)
-        x = torch.flatten(x, 1)
-        x = self.fc(x)
-        
-        x = self.dequant(x)
-        return x
-
-    def fuse_model(self):
-        self.eval()
-        tq.fuse_modules(self, [['conv1', 'bn1', 'relu']], inplace=True)
-        
-        for module_name in ['layer1', 'layer2', 'layer3', 'layer4']:
-            layer = getattr(self, module_name)
-            for basic_block in layer:
-                tq.fuse_modules(basic_block, [['conv1', 'bn1', 'relu1']], inplace=True)
-                tq.fuse_modules(basic_block, [['conv2', 'bn2']], inplace=True)
-        
-        return self
-
-# -------------------------------
-# 训练函数（带详细记录）
-# -------------------------------
-def train_model():
-    model = QuantizableResNet18(num_classes=10)
-    model.to(device)
-    criterion = nn.CrossEntropyLoss()
-    optimizer = optim.SGD(model.parameters(), lr=0.001, momentum=0.9, weight_decay=1e-4)
-    scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=30)
-    
-    logger.info("="*60)
-    logger.info("Starting FULL training (30 epochs)...")
-    logger.info("="*60)
-    
-    best_acc = 0
-    train_losses = []
-    val_accs = []
-    
-    for epoch in range(1, 31):
-        # 训练
-        model.train()
-        running_loss = 0.0
-        correct = 0
-        total = 0
-        
-        loop = tqdm(train_loader, desc=f"Epoch {epoch}/30")
-        for inputs, targets in loop:
-            inputs, targets = inputs.to(device), targets.to(device)
-            
-            optimizer.zero_grad()
-            outputs = model(inputs)
-            loss = criterion(outputs, targets)
-            loss.backward()
-            optimizer.step()
-            
-            running_loss += loss.item() * inputs.size(0)
+# -----------------------------
+# 精度验证函数
+# -----------------------------
+def validate_with_quantization(model, loader, device):
+    """验证模型在模拟量化下的精度"""
+    model.eval()
+    correct = 0
+    total = 0
+    with torch.no_grad():
+        for images, labels in loader:
+            images, labels = images.to(device), labels.to(device)
+            outputs = model(images)
             _, predicted = outputs.max(1)
-            total += targets.size(0)
-            correct += predicted.eq(targets).sum().item()
-            
-            loop.set_postfix({
-                'loss': f"{running_loss/total:.4f}",
-                'acc': f"{100.*correct/total:.2f}%"
-            })
-        
-        train_loss = running_loss / total
-        train_acc = 100. * correct / total
-        train_losses.append(train_loss)
-        
-        # 验证
-        model.eval()
-        val_correct = 0
-        val_total = 0
-        with torch.no_grad():
-            for inputs, targets in test_loader:
-                inputs, targets = inputs.to(device), targets.to(device)
-                outputs = model(inputs)
-                _, predicted = outputs.max(1)
-                val_total += targets.size(0)
-                val_correct += predicted.eq(targets).sum().item()
-        
-        val_acc = 100. * val_correct / val_total
-        val_accs.append(val_acc)
-        
-        # 日志记录
-        logger.info(f"Epoch {epoch:2d}: Train Loss={train_loss:.4f}, Train Acc={train_acc:.2f}%, Val Acc={val_acc:.2f}%")
-        
-        # 保存最佳模型
-        if val_acc > best_acc:
-            best_acc = val_acc
-            model_cpu = model.to('cpu')
-            torch.save({
-                'epoch': epoch,
-                'model_state_dict': model_cpu.state_dict(),
-                'optimizer_state_dict': optimizer.state_dict(),
-                'best_acc': best_acc,
-                'train_loss': train_loss,
-            }, "models/best_model.pth")
-            model.to(device)
-            logger.info(f"  → New best model saved! (accuracy: {best_acc:.2f}%)")
-        
-        scheduler.step()
-    
-    return model, best_acc, train_losses, val_accs
+            total += labels.size(0)
+            correct += predicted.eq(labels).sum().item()
+    quant_acc = 100. * correct / total
+    return quant_acc
 
-# -------------------------------
-# 量化函数
-# -------------------------------
-def quantize_model(best_acc):
-    logger.info("\n" + "="*60)
-    logger.info("Starting quantization on CPU...")
-    logger.info("="*60)
+def validate_original(model, loader, device):
+    """验证模型在非量化状态下的精度"""
+    model.eval()
+    correct = 0
+    total = 0
+    with torch.no_grad():
+        for images, labels in loader:
+            images, labels = images.to(device), labels.to(device)
+            outputs = model(images)
+            _, predicted = outputs.max(1)
+            total += labels.size(0)
+            correct += predicted.eq(labels).sum().item()
+    original_acc = 100. * correct / total
+    return original_acc
+
+# -----------------------------
+# 创建QAT模型
+# -----------------------------
+write_log("\n[2/6] 初始化QAT模型...")
+try:
+    model = resnet18(pretrained=True, quantize=False)
+    model.fc = nn.Linear(model.fc.in_features, 10)
     
-    try:
-        # 加载最佳模型
-        logger.info("1. Loading best model to CPU...")
-        model = QuantizableResNet18(num_classes=10)
-        checkpoint = torch.load("models/best_model.pth", map_location='cpu')
-        model.load_state_dict(checkpoint['model_state_dict'])
+    model.eval()
+    model.fuse_model()
+    write_log("模型层融合完成")
+    
+    model.qconfig = quant.get_default_qat_qconfig('fbgemm')
+    quant.prepare_qat(model, inplace=True)
+    write_log("QAT量化节点插入完成")
+    
+    model.train()
+    model = model.to(device)
+    write_log(f"QAT模型初始化完成 | 模型设备: {next(model.parameters()).device}")
+except Exception as e:
+    write_log(f"模型初始化失败: {str(e)}")
+    raise
+
+# -----------------------------
+# 优化器和损失函数
+# -----------------------------
+write_log("\n[3/6] 初始化优化器和损失函数...")
+criterion = nn.CrossEntropyLoss()
+optimizer = optim.Adam(
+    model.parameters(),
+    lr=lr
+)
+scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=lr_step_size, gamma=lr_gamma)
+write_log("优化器和损失函数初始化完成")
+write_log(f"优化器配置: Adam(lr={lr})")
+
+# -----------------------------
+# QAT训练
+# -----------------------------
+write_log("\n[4/6] 开始QAT训练...")
+write_log("-"*100)
+write_log(f"{'Epoch':<6} {'Train Loss':<12} {'Train Acc':<12} {'Test Acc':<12} {'Quant Sim Acc':<15} {'LR':<10} {'Infer Time(ms)':<15}")
+write_log("-"*100)
+
+best_acc = 0.0
+total_train_time = time.time()
+
+for epoch in range(epochs):
+    epoch_start = time.time()
+    model.train()
+    running_loss = 0.0
+    correct = 0
+    total = 0
+    
+    train_bar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{epochs}", leave=False)
+    for images, labels in train_bar:
+        images, labels = images.to(device), labels.to(device)
+        
+        optimizer.zero_grad()
+        outputs = model(images)
+        loss = criterion(outputs, labels)
+        loss.backward()
+        optimizer.step()
+        
+        running_loss += loss.item() * images.size(0)
+        _, predicted = outputs.max(1)
+        total += labels.size(0)
+        correct += predicted.eq(labels).sum().item()
+        
+        train_bar.set_postfix({
+            'loss': f"{running_loss/total:.4f}",
+            'acc': f"{100.*correct/total:.2f}%"
+        })
+    
+    train_loss = running_loss / len(train_dataset)
+    train_acc = 100. * correct / total
+    current_lr = optimizer.param_groups[0]['lr']
+    
+    original_test_acc = validate_original(model, test_loader, device)
+    quant_sim_acc = validate_with_quantization(model, test_loader, device)
+    
+    def measure_infer_time(model, loader, device):
         model.eval()
-        
-        # 层融合
-        logger.info("2. Fusing modules...")
-        model = model.fuse_model()
-        
-        # 设置量化配置
-        logger.info("3. Setting quantization config...")
-        model.qconfig = tq.get_default_qconfig('fbgemm')
-        
-        # 准备量化
-        logger.info("4. Preparing model for quantization...")
-        model_prepared = tq.prepare(model, inplace=False)
-        
-        # 校准
-        logger.info("5. Calibrating with test data (100 batches)...")
-        model_prepared.eval()
+        total_time = 0.0
+        count = 0
         with torch.no_grad():
-            for i, (inputs, _) in enumerate(test_loader):
-                if i >= 100:  # 用100个batch校准
+            for images, _ in loader:
+                if count >= 10:
                     break
-                model_prepared(inputs)
-        
-        # 转换
-        logger.info("6. Converting to INT8...")
-        model_int8 = tq.convert(model_prepared, inplace=False)
-        
-        # 测试
-        logger.info("7. Testing INT8 model...")
-        test_input = torch.randn(1, 3, 224, 224)
-        with torch.no_grad():
-            output = model_int8(test_input)
-        logger.info(f"   ✓ INT8 model output shape: {output.shape}")
-        
-        # 验证精度
-        logger.info("8. Validating INT8 model accuracy...")
-        correct = 0
-        total = 0
-        with torch.no_grad():
-            for inputs, targets in test_loader:
-                outputs = model_int8(inputs)
-                _, predicted = outputs.max(1)
-                total += targets.size(0)
-                correct += predicted.eq(targets).sum().item()
-        
-        int8_acc = 100. * correct / total
-        logger.info(f"   ✓ INT8 model accuracy: {int8_acc:.2f}%")
-        logger.info(f"   ✓ Accuracy drop: {best_acc - int8_acc:.2f}%")
-        
-        # 保存INT8模型
+                images = images.to(device)
+                start = time.time()
+                _ = model(images)
+                total_time += (time.time() - start)
+                count += 1
+        return (total_time / count) * 1000 if count > 0 else 0
+    
+    infer_time = measure_infer_time(model, test_loader, device)
+    
+    if quant_sim_acc > best_acc:
+        best_acc = quant_sim_acc
+        model_cpu = model.to('cpu')
         torch.save({
-            'model_state_dict': model_int8.state_dict(),
-            'fp32_acc': best_acc,
-            'int8_acc': int8_acc,
-            'accuracy_drop': best_acc - int8_acc
-        }, "models/resnet18_int8.pth")
-        logger.info("   ✓ INT8 model saved to models/resnet18_int8.pth")
-        
-        return model_int8, int8_acc
-        
-    except Exception as e:
-        logger.error(f"Quantization failed: {e}")
-        import traceback
-        traceback.print_exc()
-        return None, None
+            'epoch': epoch+1,
+            'model_state_dict': model_cpu.state_dict(),
+            'optimizer_state_dict': optimizer.state_dict(),
+            'best_quant_acc': best_acc,
+            'best_original_acc': original_test_acc,
+            'train_loss': train_loss
+        }, os.path.join(model_dir, "resnet18_qat_best.pth"))
+        model = model_cpu.to(device)
+        write_log(f"\nEpoch {epoch+1} 保存最佳模型 | 量化模拟精度: {quant_sim_acc:.2f}% | 原始精度: {original_test_acc:.2f}%")
+    
+    log_line = f"{epoch+1:<6} {train_loss:<12.4f} {train_acc:<12.2f} {original_test_acc:<12.2f} {quant_sim_acc:<15.2f} {current_lr:<10.6f} {infer_time:<15.2f}"
+    write_log(log_line)
+    
+    scheduler.step()
 
-# -------------------------------
-# 保存训练记录
-# -------------------------------
-def save_training_records(best_acc, int8_acc, train_losses, val_accs):
-    records = {
-        'training_date': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-        'pytorch_version': torch.__version__,
-        'device': str(device),
-        'total_epochs': 30,
-        'batch_size': 32,
-        'learning_rate': 0.001,
-        'optimizer': 'SGD',
-        'scheduler': 'CosineAnnealingLR',
-        'best_fp32_accuracy': float(best_acc),
-        'int8_accuracy': float(int8_acc) if int8_acc else None,
-        'accuracy_drop': float(best_acc - int8_acc) if int8_acc else None,
-        'train_losses': [float(x) for x in train_losses],
-        'validation_accuracies': [float(x) for x in val_accs],
-        'total_training_time': time.time() - start_time
-    }
+# -----------------------------
+# 转换为INT8模型
+# -----------------------------
+write_log("\n[5/6] 转换为INT8模型...")
+try:
+    model_int8 = resnet18(pretrained=False, quantize=False)
+    model_int8.fc = nn.Linear(model_int8.fc.in_features, 10)
+    checkpoint = torch.load(os.path.join(model_dir, "resnet18_qat_best.pth"), map_location='cpu')
+    model_int8.load_state_dict(checkpoint['model_state_dict'])
     
-    # 保存为JSON
-    json_filename = f"results/training_records_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-    with open(json_filename, 'w') as f:
-        json.dump(records, f, indent=2)
-    logger.info(f"Training records saved to {json_filename}")
+    model_int8.eval()
+    model_int8.fuse_model()
+    model_int8.qconfig = quant.get_default_qat_qconfig('fbgemm')
+    quant.prepare_qat(model_int8, inplace=True)
+    model_int8 = quant.convert(model_int8, inplace=True)
     
-    # 保存为文本格式（易读）
-    txt_filename = f"results/training_summary_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
-    with open(txt_filename, 'w') as f:
-        f.write("="*60 + "\n")
-        f.write("RESNET18 QUANTIZATION TRAINING SUMMARY\n")
-        f.write("="*60 + "\n\n")
-        f.write(f"Training Date: {records['training_date']}\n")
-        f.write(f"PyTorch Version: {records['pytorch_version']}\n")
-        f.write(f"Device: {records['device']}\n\n")
-        f.write(f"Best FP32 Accuracy: {records['best_fp32_accuracy']:.2f}%\n")
-        if records['int8_accuracy']:
-            f.write(f"INT8 Accuracy: {records['int8_accuracy']:.2f}%\n")
-            f.write(f"Accuracy Drop: {records['accuracy_drop']:.2f}%\n")
-        f.write(f"Total Training Time: {records['total_training_time']:.2f} seconds\n\n")
-        
-        f.write("Epoch-by-Epoch Results:\n")
-        f.write("-"*40 + "\n")
-        for i, (loss, acc) in enumerate(zip(train_losses, val_accs), 1):
-            f.write(f"Epoch {i:2d}: Train Loss={loss:.4f}, Val Acc={acc:.2f}%\n")
+    int8_correct = 0
+    int8_total = 0
+    int8_infer_time = 0.0
+    model_int8.eval()
+    with torch.no_grad():
+        start_time = time.time()
+        for images, labels in test_loader:
+            images, labels = images.to('cpu'), labels.to('cpu')
+            outputs = model_int8(images)
+            _, predicted = outputs.max(1)
+            int8_total += labels.size(0)
+            int8_correct += predicted.eq(labels).sum().item()
+        int8_infer_time = (time.time() - start_time) / len(test_loader) * 1000
     
-    logger.info(f"Training summary saved to {txt_filename}")
+    int8_acc = 100. * int8_correct / int8_total
+    torch.save(model_int8.state_dict(), os.path.join(model_dir, "resnet18_int8_final.pth"))
+    
+    write_log("="*80)
+    write_log("INT8模型转换完成 - 精度对比汇总")
+    write_log(f"QAT原始精度: {checkpoint['best_original_acc']:.2f}%")
+    write_log(f"QAT量化模拟精度: {checkpoint['best_quant_acc']:.2f}%")
+    write_log(f"INT8最终精度: {int8_acc:.2f}%")
+    write_log(f"INT8推理时间（每批次）: {int8_infer_time:.2f} ms")
+    write_log(f"总训练时间: {(time.time() - total_train_time):.2f} 秒")
+    write_log("="*80)
+    
+except Exception as e:
+    write_log(f"INT8模型转换失败: {str(e)}")
+    raise
 
-# -------------------------------
-# 主程序
-# -------------------------------
-if __name__ == "__main__":
-    try:
-        # 训练
-        model, best_acc, train_losses, val_accs = train_model()
-        logger.info(f"\n✓ Training completed! Best FP32 accuracy: {best_acc:.2f}%")
-        
-        # 量化
-        model_int8, int8_acc = quantize_model(best_acc)
-        
-        # 保存记录
-        save_training_records(best_acc, int8_acc, train_losses, val_accs)
-        
-        # 最终结果
-        logger.info("\n" + "="*60)
-        logger.info("FINAL RESULTS")
-        logger.info("="*60)
-        logger.info(f"Best FP32 accuracy: {best_acc:.2f}%")
-        if int8_acc:
-            logger.info(f"INT8 accuracy: {int8_acc:.2f}%")
-            logger.info(f"Accuracy drop: {best_acc - int8_acc:.2f}%")
-        logger.info(f"Total training time: {time.time() - start_time:.2f} seconds")
-        logger.info("="*60)
-        logger.info("All tasks completed successfully!")
-        
-    except Exception as e:
-        logger.error(f"Error in main execution: {e}")
-        import traceback
-        traceback.print_exc()
+# -----------------------------
+# 训练完成
+# -----------------------------
+write_log("\n[6/6] 训练完成 - 关键指标汇总")
+write_log(f"学习率: {lr}")
+write_log(f"最佳量化模拟精度: {best_acc:.2f}%")
+write_log(f"INT8最终精度: {int8_acc:.2f}%")
+write_log(f"精度掉点（QAT→INT8）: {best_acc - int8_acc:.2f}%")
+write_log(f"日志文件路径: {log_filename}")
+write_log("所有步骤完成！")
