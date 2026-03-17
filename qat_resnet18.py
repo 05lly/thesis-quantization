@@ -71,7 +71,7 @@ model.fc = nn.Linear(model.fc.in_features, 10)
 # 载入预训练好的 FP32 基准权重 (确保接力逻辑)
 fp32_weight_path = os.path.join(model_dir, "fp32_resnet18.pth")
 if os.path.exists(fp32_weight_path):
-    model.load_state_dict(torch.load(fp32_weight_path, map_location='cpu')，)
+    model.load_state_dict(torch.load(fp32_weight_path, map_location='cpu')，strict=False)
     log_message(f"Checkpoint loaded: {fp32_weight_path}")
 else:
     log_message("Warning: Baseline weights not found. Check path.")
@@ -141,7 +141,6 @@ for epoch in range(epochs):
 # -----------------------------
 # 6. 转换并序列化模型 (部署优化)
 # -----------------------------
-log_message("Converting QAT model to deployed INT8 format...")
 model.load_state_dict(torch.load(os.path.join(model_dir, "resnet18_qat_best.pth"), map_location=device))
 
 log_message("Converting QAT model to deployed INT8 format...")
