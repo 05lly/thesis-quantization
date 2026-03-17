@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.optim as optim
 import torch.ao.quantization as quant
 from torchvision import datasets, transforms
-from torchvision.models.quantization import resnet18
+from torchvision.models.quantization import resnet18 as qat_resnet18
 from torch.utils.data import DataLoader
 import os
 import time
@@ -11,172 +11,178 @@ import datetime
 from tqdm import tqdm
 
 # -----------------------------
-# 1. 基础配置
+# 1. 参数配置
 # -----------------------------
 data_root = "./data"
 batch_size = 128
-epochs = 10          # 微调 10 个 epoch
-lr = 0.0001
+epochs = 10         
+lr = 1e-5           # QAT阶段采用极小学习率以微调量化参数
+momentum = 0.9
 weight_decay = 1e-4
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-log_dir = "logs"
 model_dir = "models"
-os.makedirs(log_dir, exist_ok=True)
+log_dir = "logs"
 os.makedirs(model_dir, exist_ok=True)
+os.makedirs(log_dir, exist_ok=True)
 
-log_filename = os.path.join(
-    log_dir, f"qat_training_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
-)
+log_filename = os.path.join(log_dir, f"train_qat_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
 
-def write_log(msg):
-    now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    line = f"[{now}] {msg}"
-    print(line)
+def log_message(msg):
+    t = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    full_msg = f"[{t}] {msg}"
+    print(full_msg)
     with open(log_filename, "a", encoding="utf-8") as f:
-        f.write(line + "\n")
+        f.write(full_msg + "\n")
 
-write_log("="*80)
-write_log("ResNet18 QAT CIFAR-10 实验 - 日志记录开始")
-write_log(f"设备: {device}, Batch Size: {batch_size}, Epochs: {epochs}, LR: {lr}, Weight Decay: {weight_decay}")
-write_log("="*80)
+log_message("QAT Training session started.")
+log_message(f"Config: Epochs={epochs}, LR={lr}, Device={device}")
 
 # -----------------------------
-# 2. 数据集
+# 2. 数据处理流 (保持与FP32 Baseline一致)
 # -----------------------------
-transform_train = transforms.Compose([
-    transforms.Resize(224),
+train_transform = transforms.Compose([
     transforms.RandomHorizontalFlip(),
-    transforms.RandomCrop(224, padding=4),
-    transforms.ToTensor(),
-    transforms.Normalize([0.485,0.456,0.406],[0.229,0.224,0.225])
-])
-transform_test = transforms.Compose([
+    transforms.RandomCrop(32, padding=4),
     transforms.Resize(224),
     transforms.ToTensor(),
-    transforms.Normalize([0.485,0.456,0.406],[0.229,0.224,0.225])
+    transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
 ])
 
-train_dataset = datasets.CIFAR10(root=data_root, train=True, download=True, transform=transform_train)
-test_dataset = datasets.CIFAR10(root=data_root, train=False, download=True, transform=transform_test)
+test_transform = transforms.Compose([
+    transforms.Resize(224),
+    transforms.ToTensor(),
+    transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+])
 
-train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=0)
-test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=0)
+train_set = datasets.CIFAR10(root=data_root, train=True, download=True, transform=train_transform)
+test_set = datasets.CIFAR10(root=data_root, train=False, download=True, transform=test_transform)
 
-write_log(f"训练集: {len(train_dataset)}, 测试集: {len(test_dataset)}")
+train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True, num_workers=4, pin_memory=True)
+test_loader = DataLoader(test_set, batch_size=batch_size, shuffle=False, num_workers=4, pin_memory=True)
 
 # -----------------------------
-# 3. QAT 模型
+# 3. 构建 QAT 模型并加载 FP32 权重
 # -----------------------------
-write_log("初始化 ResNet18 QAT 模型...")
+# 加载支持量化算子的模型结构
+model = qat_resnet18(weights=None, quantize=False)
+model.fc = nn.Linear(model.fc.in_features, 10)
 
-model = resnet18(pretrained=True, quantize=False)
-num_ftrs = model.fc.in_features
-model.fc = nn.Linear(num_ftrs,10)
+# 载入预训练好的 FP32 基准权重 (确保接力逻辑)
+fp32_weight_path = os.path.join(model_dir, "fp32_resnet18.pth")
+if os.path.exists(fp32_weight_path):
+    model.load_state_dict(torch.load(fp32_weight_path, map_location='cpu'),strict=False)
+    log_message(f"Checkpoint loaded: {fp32_weight_path}")
+else:
+    log_message("Warning: Baseline weights not found. Check path.")
+
+# 准备 QAT 流程
 model.train()
-model.fuse_model()
+model.fuse_model()  # 算子融合 (Conv+BN+ReLU)
 model.qconfig = quant.get_default_qat_qconfig("fbgemm")
 quant.prepare_qat(model, inplace=True)
-model = model.to(device)
-write_log("QAT 模型准备完成")
+model.to(device)
 
 # -----------------------------
-# 4. 损失函数 & 优化器
+# 4. 优化器与损失函数
 # -----------------------------
+optimizer = optim.SGD(model.parameters(), lr=lr, momentum=momentum, weight_decay=weight_decay)
 criterion = nn.CrossEntropyLoss()
-optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
-scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=5, gamma=0.5)
 
 # -----------------------------
-# 5. 训练循环
+# 5. 训练微调
 # -----------------------------
 best_acc = 0.0
-total_start_time = time.time()
-write_log(f"{'Epoch':<6}{'TrainAcc':<12}{'TestAcc':<12}{'QuantSimAcc':<15}{'Loss':<12}{'LR':<10}")
+start_time = time.time()
+
+log_message(f"{'Epoch':<10}{'TrainAcc':<15}{'TestAcc':<15}{'Loss':<15}")
 
 for epoch in range(epochs):
-    epoch_start = time.time()
     model.train()
     running_loss = 0.0
-    train_correct = 0
-    train_total = 0
+    correct = 0
+    total = 0
 
-    for images, labels in tqdm(train_loader, desc=f"Epoch {epoch+1}/{epochs}", leave=False):
-        images, labels = images.to(device), labels.to(device)
+    for imgs, labels in tqdm(train_loader, desc=f"QAT Epoch {epoch+1}", leave=False):
+        imgs, labels = imgs.to(device), labels.to(device)
+        
         optimizer.zero_grad()
-        outputs = model(images)
+        outputs = model(imgs)
         loss = criterion(outputs, labels)
         loss.backward()
         optimizer.step()
 
-        running_loss += loss.item() * images.size(0)
+        running_loss += loss.item() * imgs.size(0)
         _, predicted = outputs.max(1)
-        train_total += labels.size(0)
-        train_correct += (predicted == labels).sum().item()
-
-    train_loss = running_loss / len(train_dataset)
-    train_acc = 100*train_correct/train_total
-
-    # -----------------------------
-    # 测试
-    # -----------------------------
-    model.eval()
-    correct = 0
-    total = 0
-    with torch.no_grad():
-        for images, labels in test_loader:
-            images, labels = images.to(device), labels.to(device)
-            outputs = model(images)
-            _, predicted = outputs.max(1)
-            total += labels.size(0)
-            correct += (predicted == labels).sum().item()
-    test_acc = 100*correct/total
-
-    # QAT 模拟量化精度
-    quant_sim_acc = test_acc
-
-    lr_current = optimizer.param_groups[0]['lr']
-
-    write_log(f"{epoch+1:<6}{train_acc:<12.2f}{test_acc:<12.2f}{quant_sim_acc:<15.2f}{train_loss:<12.4f}{lr_current:<10.6f}")
-
-    # 保存最佳 QAT 模型
-    if test_acc > best_acc:
-        best_acc = test_acc
-        torch.save(model.state_dict(), os.path.join(model_dir,"resnet18_qat_best.pth"))
-        write_log(f"Epoch {epoch+1} 保存最佳模型 | TestAcc: {test_acc:.2f}%")
-
-    scheduler.step()
-    write_log(f"Epoch {epoch+1} 完成 | 耗时: {time.time()-epoch_start:.1f}s")
-
-write_log(f"训练完成 | 总耗时: {time.time()-total_start_time:.1f}s | 最佳精度: {best_acc:.2f}%")
-
-# -----------------------------
-# 6. 转换 INT8
-# -----------------------------
-write_log("开始 QAT -> INT8 转换...")
-model.eval()
-model_cpu = model.to("cpu")
-model_int8 = quant.convert(model_cpu, inplace=False)
-torch.save(model_int8.state_dict(), os.path.join(model_dir,"resnet18_int8.pth"))
-write_log("INT8 模型已保存")
-
-# -----------------------------
-# 7. INT8 测试
-# -----------------------------
-correct = 0
-total = 0
-start_time = time.time()
-with torch.no_grad():
-    for images, labels in test_loader:
-        images, labels = images.to("cpu"), labels.to("cpu")
-        outputs = model_int8(images)
-        _, pred = outputs.max(1)
         total += labels.size(0)
-        correct += (pred==labels).sum().item()
+        correct += predicted.eq(labels).sum().item()
 
-int8_acc = 100*correct/total
-infer_time = time.time()-start_time
+    # 验证模拟量化精度
+    model.eval()
+    test_correct = 0
+    with torch.no_grad():
+        for imgs, labels in test_loader:
+            imgs, labels = imgs.to(device), labels.to(device)
+            outputs = model(imgs)
+            _, predicted = outputs.max(1)
+            test_correct += predicted.eq(labels).sum().item()
+    
+    val_acc = 100. * test_correct / len(test_set)
+    train_acc = 100. * correct / total
+    epoch_loss = running_loss / len(train_set)
 
-write_log(f"INT8 测试精度: {int8_acc:.2f}% | 推理总耗时: {infer_time:.2f}s | 单批次推理时间: {infer_time/len(test_loader)*1000:.2f} ms")
-write_log("="*80)
-write_log("实验完成 ✅")
+    log_message(f"{epoch+1:<10}{train_acc:<15.2f}{val_acc:<15.2f}{epoch_loss:<15.4f}")
+
+    if val_acc > best_acc:
+        best_acc = val_acc
+        torch.save(model.state_dict(), os.path.join(model_dir, "resnet18_qat_best.pth"))
+        log_message(f"--- Best QAT Accuracy Updated: {best_acc:.2f}% ---")
+
+# -----------------------------
+# 6. 转换并序列化模型 (部署优化)
+# -----------------------------
+log_message("Converting QAT model to deployed INT8 format...")
+model.load_state_dict(torch.load(os.path.join(model_dir, "resnet18_qat_best.pth"), map_location=device))
+log_message("Converting QAT model to deployed INT8 format...")
+model.eval()
+model.to('cpu')
+
+# 1. 转换为量化模型 (INT8)
+int8_model = quant.convert(model, inplace=False)
+
+# 2. 导出为 TorchScript 格式 (关键：用于树莓派部署)
+# 使用 Trace 方法记录计算图，这样模型就包含了结构信息
+example_input = torch.randn(1, 3, 224, 224)
+traced_model = torch.jit.trace(int8_model, example_input)
+
+# 3. 保存两种格式：
+# 纯权重格式（用于继续在 PC/PyTorch 环境下分析调试）
+weights_path = os.path.join(model_dir, "resnet18_int8_final.pth")
+torch.save(int8_model.state_dict(), weights_path)
+
+# TorchScript格式（用于树莓派脱机部署）
+deploy_path = os.path.join(model_dir, "resnet18_int8_deploy.pt")
+torch.jit.save(traced_model, deploy_path)
+
+# -----------------------------
+# 7. 性能对比与文件体积记录
+# -----------------------------
+def get_size_mb(path):
+    if os.path.exists(path):
+        return os.path.getsize(path) / (1024 * 1024)
+    return 0.0
+
+fp32_size = get_size_mb(fp32_weight_path)
+int8_size = get_size_mb(deploy_path)
+
+log_message("=" * 50)
+log_message(f"QAT Process Finished.")
+log_message(f"Best Simulation Accuracy: {best_acc:.2f}%")
+log_message(f"Deployment Model Saved: {deploy_path}")
+if fp32_size > 0:
+    log_message(f"FP32 Model Size: {fp32_size:.2f} MB")
+    log_message(f"INT8 Deploy Size: {int8_size:.2f} MB")
+    log_message(f"Compression Ratio: {fp32_size/int8_size:.2f}x")
+log_message(f"Total Training Time: {(time.time()-start_time)/60:.2f} mins")
+log_message("=" * 50)
+log_message("Experiment Complete. Ready for Raspberry Pi 5. ✅")

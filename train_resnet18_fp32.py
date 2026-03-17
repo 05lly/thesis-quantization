@@ -4,127 +4,155 @@ import torch.optim as optim
 from torchvision import datasets, transforms, models
 from torch.utils.data import DataLoader
 import os
+import time
 import datetime
+from tqdm import tqdm
 
 # -----------------------------
-# 1. 基本配置
+# 1. 环境与参数配置
 # -----------------------------
+data_root = "./data"
 batch_size = 128
-num_epochs = 20
-learning_rate = 0.001
-device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-print("Using device:", device)
+num_epochs = 30
+lr = 0.01
+momentum = 0.9
+weight_decay = 5e-4
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-# 创建模型保存目录
-os.makedirs("models", exist_ok=True)
-os.makedirs("logs", exist_ok=True)
+model_dir = "models"
+log_dir = "logs"
+os.makedirs(model_dir, exist_ok=True)
+os.makedirs(log_dir, exist_ok=True)
 
-# 日志文件名
-log_file = f"logs/resnet18_fp32_gpu_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+log_path = os.path.join(log_dir, f"train_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
+
+def logger(msg):
+    t = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    line = f"[{t}] {msg}"
+    print(line)
+    with open(log_path, "a", encoding="utf-8") as f:
+        f.write(line + "\n")
+
+logger(f"Environment: {device} | Batch Size: {batch_size} | Epochs: {num_epochs}")
 
 # -----------------------------
-# 2. CIFAR-10 数据预处理
+# 2. 数据处理流
 # -----------------------------
-transform_train = transforms.Compose([
-    transforms.Resize(224),
+train_transform = transforms.Compose([
     transforms.RandomHorizontalFlip(),
-    transforms.RandomCrop(224, padding=4),
-    transforms.ToTensor(),
-    transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                         std=[0.229, 0.224, 0.225])
-])
-
-transform_test = transforms.Compose([
+    transforms.RandomCrop(32, padding=4),
     transforms.Resize(224),
     transforms.ToTensor(),
-    transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                         std=[0.229, 0.224, 0.225])
+    transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
 ])
 
-train_dataset = datasets.CIFAR10(root="./data", train=True, download=True, transform=transform_train)
-test_dataset = datasets.CIFAR10(root="./data", train=False, download=True, transform=transform_test)
+test_transform = transforms.Compose([
+    transforms.Resize(224),
+    transforms.ToTensor(),
+    transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+])
 
-train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=4, pin_memory=True)
-test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=4, pin_memory=True)
+train_data = datasets.CIFAR10(root=data_root, train=True, download=True, transform=train_transform)
+test_data = datasets.CIFAR10(root=data_root, train=False, download=True, transform=test_transform)
+
+train_loader = DataLoader(train_data, batch_size=batch_size, shuffle=True, num_workers=4, pin_memory=True)
+test_loader = DataLoader(test_data, batch_size=batch_size, shuffle=False, num_workers=4, pin_memory=True)
 
 # -----------------------------
-# 3. ResNet18 模型
+# 3. 网络构建
 # -----------------------------
-model = models.resnet18(pretrained=True)
-num_features = model.fc.in_features
-model.fc = nn.Linear(num_features, 10)  # CIFAR-10 10 类
+# 使用预训练权重并适配 CIFAR-10 类别数
+model = models.resnet18(weights=models.ResNet18_Weights.IMAGENET1K_V1)
+model.fc = nn.Linear(model.fc.in_features, 10)
 model = model.to(device)
 
 # -----------------------------
-# 4. 损失函数 & 优化器
+# 4. 优化器与策略
 # -----------------------------
 criterion = nn.CrossEntropyLoss()
-optimizer = optim.Adam(model.parameters(), lr=learning_rate)
+optimizer = optim.SGD(model.parameters(), lr=lr, momentum=momentum, weight_decay=weight_decay)
+scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=[15, 25], gamma=0.1)
 
 # -----------------------------
-# 5. 训练 & 日志
+# 5. 主训练循环
 # -----------------------------
-best_acc = 0.0
-with open(log_file, "w") as f_log:
-    f_log.write("epoch,train_loss,train_acc,test_acc\n")
+best_accuracy = 0.0
+start_wall_time = time.time()
 
-    for epoch in range(num_epochs):
-        model.train()
-        running_loss = 0.0
-        correct = 0
-        total = 0
+logger(f"{'Epoch':<10}{'TrainAcc':<15}{'TestAcc':<15}{'Loss':<15}{'LR':<10}")
 
-        print(f"\nEpoch [{epoch+1}/{num_epochs}]")
-        f_log.write(f"\nEpoch [{epoch+1}/{num_epochs}]\n")
+for epoch in range(num_epochs):
+    model.train()
+    running_loss = 0.0
+    correct_preds = 0
+    total_samples = 0
 
-        for images, labels in train_loader:
-            images = images.to(device, non_blocking=True)
-            labels = labels.to(device, non_blocking=True)
+    # 训练阶段
+    for inputs, targets in tqdm(train_loader, desc=f"Epoch {epoch+1}", leave=False):
+        inputs, targets = inputs.to(device), targets.to(device)
+        
+        optimizer.zero_grad()
+        outputs = model(inputs)
+        loss = criterion(outputs, targets)
+        loss.backward()
+        optimizer.step()
 
-            optimizer.zero_grad()
-            outputs = model(images)
-            loss = criterion(outputs, labels)
-            loss.backward()
-            optimizer.step()
+        running_loss += loss.item() * inputs.size(0)
+        _, preds = outputs.max(1)
+        total_samples += targets.size(0)
+        correct_preds += preds.eq(targets).sum().item()
 
-            running_loss += loss.item()
-            _, predicted = outputs.max(1)
-            total += labels.size(0)
-            correct += predicted.eq(labels).sum().item()
+    avg_train_loss = running_loss / len(train_data)
+    train_acc = 100. * correct_preds / total_samples
 
-        train_loss = running_loss / len(train_loader)
-        train_acc = 100. * correct / total
-        print(f"Train Loss: {train_loss:.4f} | Train Acc: {train_acc:.2f}%")
-        f_log.write(f"train_loss={train_loss:.4f}, train_acc={train_acc:.2f}%\n")
+    # 评估阶段
+    model.eval()
+    test_correct = 0
+    test_total = 0
+    with torch.no_grad():
+        for inputs, targets in test_loader:
+            inputs, targets = inputs.to(device), targets.to(device)
+            outputs = model(inputs)
+            _, preds = outputs.max(1)
+            test_total += targets.size(0)
+            test_correct += preds.eq(targets).sum().item()
+    
+    test_acc = 100. * test_correct / test_total
+    curr_lr = optimizer.param_groups[0]['lr']
 
-        # -----------------------------
-        # 测试
-        # -----------------------------
-        model.eval()
-        correct = 0
-        total = 0
-        with torch.no_grad():
-            for images, labels in test_loader:
-                images = images.to(device, non_blocking=True)
-                labels = labels.to(device, non_blocking=True)
-                outputs = model(images)
-                _, predicted = outputs.max(1)
-                total += labels.size(0)
-                correct += predicted.eq(labels).sum().item()
+    logger(f"{epoch+1:<10}{train_acc:<15.2f}{test_acc:<15.2f}{avg_train_loss:<15.4f}{curr_lr:<10.6f}")
 
-        test_acc = 100. * correct / total
-        print(f"Test Acc: {test_acc:.2f}%")
-        f_log.write(f"test_acc={test_acc:.2f}%\n")
+    # 保存最优模型
+    if test_acc > best_accuracy:
+        best_accuracy = test_acc
+        
+        # 保存完整 checkpoint (包含优化器状态)
+        checkpoint = {
+            'epoch': epoch + 1,
+            'model_state': model.state_dict(),
+            'optimizer_state': optimizer.state_dict(),
+            'scheduler_state': scheduler.state_dict(),
+            'accuracy': best_accuracy
+        }
+        torch.save(checkpoint, os.path.join(model_dir, "checkpoint_best.pth"))
+        
+        # 按要求保存纯权重文件
+        torch.save(model.state_dict(), os.path.join(model_dir, "fp32_resnet18.pth"))
+        logger(f"--- Saved best model: {best_accuracy:.2f}% ---")
 
-        # 保存最佳模型
-        if test_acc > best_acc:
-            best_acc = test_acc
-            torch.save(model.state_dict(), "models/resnet18_fp32_gpu.pth")
-            print("✔ Best ResNet18 FP32 model saved")
+    scheduler.step()
 
-        # 保存每个epoch的数据到csv风格文件，方便画图
-        with open(log_file, "a") as f_csv:
-            f_csv.write(f"{epoch+1},{train_loss:.4f},{train_acc:.2f},{test_acc:.2f}\n")
+# -----------------------------
+# 6. 结果汇总
+# -----------------------------
+total_duration = (time.time() - start_wall_time) / 60
+model_file_path = os.path.join(model_dir, "fp32_resnet18.pth")
+final_size = os.path.getsize(model_file_path) / (1024 * 1024)
 
-print("\nTraining Finished")
-print(f"Best Test Accuracy: {best_acc:.2f}%")
+logger("=" * 50)
+logger(f"Training Complete.")
+logger(f"Best Test Accuracy: {best_accuracy:.2f}%")
+logger(f"Model Saved As: {model_file_path}")
+logger(f"Model Size: {final_size:.2f} MB")
+logger(f"Total Time: {total_duration:.2f} mins")
+logger("=" * 50)
