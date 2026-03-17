@@ -142,22 +142,22 @@ def validate_original(model, loader, device):
     return original_acc
 
 # -----------------------------
-# 创建QAT模型
+# 创建QAT模型（修复核心错误：调整模式顺序）
 # -----------------------------
 write_log("\n[2/6] 初始化QAT模型...")
 try:
     model = resnet18(pretrained=True, quantize=False)
     model.fc = nn.Linear(model.fc.in_features, 10)
     
-    model.eval()
-    model.fuse_model()
+    # 修复关键步骤：先切换到训练模式，再执行prepare_qat
+    model.train()  # 第一步：先切训练模式（prepare_qat必须）
+    model.fuse_model()  # 第二步：层融合（训练模式下也可执行）
     write_log("模型层融合完成")
     
     model.qconfig = quant.get_default_qat_qconfig('fbgemm')
-    quant.prepare_qat(model, inplace=True)
+    quant.prepare_qat(model, inplace=True)  # 第三步：prepare_qat（训练模式下执行）
     write_log("QAT量化节点插入完成")
     
-    model.train()
     model = model.to(device)
     write_log(f"QAT模型初始化完成 | 模型设备: {next(model.parameters()).device}")
 except Exception as e:
@@ -268,10 +268,12 @@ try:
     checkpoint = torch.load(os.path.join(model_dir, "resnet18_qat_best.pth"), map_location='cpu')
     model_int8.load_state_dict(checkpoint['model_state_dict'])
     
-    model_int8.eval()
+    # INT8转换时的正确流程
+    model_int8.train()  # 先切训练模式
     model_int8.fuse_model()
     model_int8.qconfig = quant.get_default_qat_qconfig('fbgemm')
     quant.prepare_qat(model_int8, inplace=True)
+    model_int8.eval()  # 转换前切回评估模式
     model_int8 = quant.convert(model_int8, inplace=True)
     
     int8_correct = 0
