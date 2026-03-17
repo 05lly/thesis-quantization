@@ -185,4 +185,4 @@ if fp32_size > 0:
     log_message(f"Compression Ratio: {fp32_size/int8_size:.2f}x")
 log_message(f"Total Training Time: {(time.time()-start_time)/60:.2f} mins")
 log_message("=" * 50)
-log_message("Experiment Complete. Ready for Raspberry Pi 5. ")
+log_message("Experiment Complete. Ready for Raspberry Pi 5.")
