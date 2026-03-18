@@ -8,3 +8,5 @@ __pycache__/
 *.tmp
 *.bak
 .DS_Store
+*.pth
+*.pt
