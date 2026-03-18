@@ -2,157 +2,121 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torchvision import datasets, transforms, models
-from torch.utils.data import DataLoader
 import os
 import time
 import datetime
 from tqdm import tqdm
 
-# -----------------------------
-# 1. 环境与参数配置
-# -----------------------------
-data_root = "./data"
-batch_size = 128
-num_epochs = 30
-lr = 0.01
-momentum = 0.9
-weight_decay = 5e-4
+# --- 1. 参数配置 (与 QAT 脚本严格对齐) ---
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+batch_size = 128
+epochs = 30  # FP32 训练通常需要更多轮数以确保收敛基准足够高
+lr = 0.01    # 初始学习率，配合 CosineAnnealing 优化
 
-model_dir = "models"
+if os.path.exists("/root/autodl-tmp"):
+    model_dir = "/root/autodl-tmp/my_backup"
+else:
+    model_dir = "models"
+
 log_dir = "logs"
 os.makedirs(model_dir, exist_ok=True)
 os.makedirs(log_dir, exist_ok=True)
 
-log_path = os.path.join(log_dir, f"train_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
+# --- 2. 统一日志函数 ---
+log_filename = os.path.join(log_dir, f"fp32_resnet18_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
 
-def logger(msg):
+def log_message(msg):
     t = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    line = f"[{t}] {msg}"
-    print(line)
-    with open(log_path, "a", encoding="utf-8") as f:
-        f.write(line + "\n")
+    full_msg = f"[{t}] {msg}"
+    print(full_msg)
+    with open(log_filename, "a", encoding="utf-8") as f:
+        f.write(full_msg + "\n")
 
-logger(f"Environment: {device} | Batch Size: {batch_size} | Epochs: {num_epochs}")
+log_message(f"Environment: {device} | Batch Size: {batch_size} | Epochs: {epochs} | Mode: FP32-Baseline")
 
-# -----------------------------
-# 2. 数据处理流
-# -----------------------------
-train_transform = transforms.Compose([
+# --- 3. 数据处理 (对齐 224 分辨率与归一化参数) ---
+# 训练集：包含数据增强
+transform_train = transforms.Compose([
+    transforms.Resize(224),
     transforms.RandomHorizontalFlip(),
-    transforms.RandomCrop(32, padding=4),
-    transforms.Resize(224),
     transforms.ToTensor(),
-    transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+    transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
 ])
 
-test_transform = transforms.Compose([
+# 测试集：仅 Resize
+transform_test = transforms.Compose([
     transforms.Resize(224),
     transforms.ToTensor(),
-    transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+    transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
 ])
 
-train_data = datasets.CIFAR10(root=data_root, train=True, download=True, transform=train_transform)
-test_data = datasets.CIFAR10(root=data_root, train=False, download=True, transform=test_transform)
+trainloader = torch.utils.data.DataLoader(
+    datasets.CIFAR10('./data', train=True, download=True, transform=transform_train),
+    batch_size=batch_size, shuffle=True, num_workers=4, pin_memory=True)
 
-train_loader = DataLoader(train_data, batch_size=batch_size, shuffle=True, num_workers=4, pin_memory=True)
-test_loader = DataLoader(test_data, batch_size=batch_size, shuffle=False, num_workers=4, pin_memory=True)
+testloader = torch.utils.data.DataLoader(
+    datasets.CIFAR10('./data', train=False, download=True, transform=transform_test),
+    batch_size=batch_size, shuffle=False, num_workers=4, pin_memory=True)
 
-# -----------------------------
-# 3. 网络构建
-# -----------------------------
-# 使用预训练权重并适配 CIFAR-10 类别数
-model = models.resnet18(weights=models.ResNet18_Weights.IMAGENET1K_V1)
+# --- 4. 模型加载 (迁移学习) ---
+log_message("Loading ResNet18 with ImageNet weights...")
+# 注意：使用 models.quantization.resnet18(quantize=False) 以确保与 QAT 结构完全对齐
+model = models.quantization.resnet18(weights=models.ResNet18_Weights.IMAGENET1K_V1, quantize=False)
 model.fc = nn.Linear(model.fc.in_features, 10)
 model = model.to(device)
 
-# -----------------------------
-# 4. 优化器与策略
-# -----------------------------
 criterion = nn.CrossEntropyLoss()
-optimizer = optim.SGD(model.parameters(), lr=lr, momentum=momentum, weight_decay=weight_decay)
-scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=[15, 25], gamma=0.1)
+optimizer = optim.SGD(model.parameters(), lr=lr, momentum=0.9, weight_decay=1e-4)
+scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
 
-# -----------------------------
-# 5. 主训练循环
-# -----------------------------
-best_accuracy = 0.0
-start_wall_time = time.time()
+# --- 5. 训练循环 ---
+best_acc = 0.0
+start_time = time.time()
+log_message(f"{'Epoch':<10}{'TrainAcc':<15}{'TestAcc':<15}{'LR':<15}")
 
-logger(f"{'Epoch':<10}{'TrainAcc':<15}{'TestAcc':<15}{'Loss':<15}{'LR':<10}")
-
-for epoch in range(num_epochs):
+for epoch in range(epochs):
     model.train()
-    running_loss = 0.0
-    correct_preds = 0
-    total_samples = 0
-
-    # 训练阶段
-    for inputs, targets in tqdm(train_loader, desc=f"Epoch {epoch+1}", leave=False):
-        inputs, targets = inputs.to(device), targets.to(device)
-        
+    running_loss, correct, total = 0.0, 0, 0
+    for inputs, labels in tqdm(trainloader, desc=f"FP32 Epoch {epoch+1}", leave=False):
+        inputs, labels = inputs.to(device), labels.to(device)
         optimizer.zero_grad()
         outputs = model(inputs)
-        loss = criterion(outputs, targets)
+        loss = criterion(outputs, labels)
         loss.backward()
         optimizer.step()
-
-        running_loss += loss.item() * inputs.size(0)
-        _, preds = outputs.max(1)
-        total_samples += targets.size(0)
-        correct_preds += preds.eq(targets).sum().item()
-
-    avg_train_loss = running_loss / len(train_data)
-    train_acc = 100. * correct_preds / total_samples
-
-    # 评估阶段
-    model.eval()
-    test_correct = 0
-    test_total = 0
-    with torch.no_grad():
-        for inputs, targets in test_loader:
-            inputs, targets = inputs.to(device), targets.to(device)
-            outputs = model(inputs)
-            _, preds = outputs.max(1)
-            test_total += targets.size(0)
-            test_correct += preds.eq(targets).sum().item()
+        
+        _, pred = torch.max(outputs, 1)
+        total += labels.size(0)
+        correct += (pred == labels).sum().item()
     
-    test_acc = 100. * test_correct / test_total
-    curr_lr = optimizer.param_groups[0]['lr']
-
-    logger(f"{epoch+1:<10}{train_acc:<15.2f}{test_acc:<15.2f}{avg_train_loss:<15.4f}{curr_lr:<10.6f}")
-
-    # 保存最优模型
-    if test_acc > best_accuracy:
-        best_accuracy = test_acc
-        
-        # 保存完整 checkpoint (包含优化器状态)
-        checkpoint = {
-            'epoch': epoch + 1,
-            'model_state': model.state_dict(),
-            'optimizer_state': optimizer.state_dict(),
-            'scheduler_state': scheduler.state_dict(),
-            'accuracy': best_accuracy
-        }
-        torch.save(checkpoint, os.path.join(model_dir, "checkpoint_best.pth"))
-        
-        # 按要求保存纯权重文件
-        torch.save(model.state_dict(), os.path.join(model_dir, "fp32_resnet18.pth"))
-        logger(f"--- Saved best model: {best_accuracy:.2f}% ---")
-
     scheduler.step()
+    
+    # 验证环节
+    model.eval()
+    test_correct, test_total = 0, 0
+    with torch.no_grad():
+        for inputs, labels in testloader:
+            inputs, labels = inputs.to(device), labels.to(device)
+            outputs = model(inputs)
+            _, pred = torch.max(outputs, 1)
+            test_total += labels.size(0)
+            test_correct += (pred == labels).sum().item()
+    
+    val_acc = 100. * test_correct / test_total
+    train_acc = 100. * correct / total
+    current_lr = scheduler.get_last_lr()[0]
+    
+    log_message(f"{epoch+1:<10}{train_acc:<15.2f}{val_acc:<15.2f}{current_lr:<15.6f}")
+    
+    if val_acc > best_acc:
+        best_acc = val_acc
+        save_path = os.path.join(model_dir, "fp32_resnet18_best.pth")
+        torch.save(model.state_dict(), save_path)
+        log_message(f"New Best Accuracy: {best_acc:.2f}% | Saved to: {save_path}")
 
-# -----------------------------
-# 6. 结果汇总
-# -----------------------------
-total_duration = (time.time() - start_wall_time) / 60
-model_file_path = os.path.join(model_dir, "fp32_resnet18.pth")
-final_size = os.path.getsize(model_file_path) / (1024 * 1024)
-
-logger("=" * 50)
-logger(f"Training Complete.")
-logger(f"Best Test Accuracy: {best_accuracy:.2f}%")
-logger(f"Model Saved As: {model_file_path}")
-logger(f"Model Size: {final_size:.2f} MB")
-logger(f"Total Time: {total_duration:.2f} mins")
-logger("=" * 50)
+# --- 6. 实验总结 ---
+log_message("=" * 55)
+log_message("FP32 Baseline Training Finished")
+log_message(f"Best Accuracy: {best_acc:.2f}%")
+log_message(f"Total Training Time: {(time.time()-start_time)/60:.2f} mins")
+log_message("=" * 55)
