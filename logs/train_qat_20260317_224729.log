@@ -1,0 +1,32 @@
+[2026-03-17 22:47:29] QAT Training session started.
+[2026-03-17 22:47:29] Config: Epochs=10, LR=1e-05, Device=cuda
+[2026-03-17 22:47:31] Warning: Baseline weights not found. Check path.
+[2026-03-17 22:47:32] Epoch     TrainAcc       TestAcc        Loss           
+[2026-03-17 22:48:31] 1         13.10          15.66          2.2957         
+[2026-03-17 22:48:31] --- Best QAT Accuracy Updated: 15.66% ---
+[2026-03-17 22:49:28] 2         16.31          18.15          2.2305         
+[2026-03-17 22:49:28] --- Best QAT Accuracy Updated: 18.15% ---
+[2026-03-17 22:50:26] 3         19.38          19.44          2.1951         
+[2026-03-17 22:50:26] --- Best QAT Accuracy Updated: 19.44% ---
+[2026-03-17 22:51:23] 4         21.24          21.76          2.1679         
+[2026-03-17 22:51:23] --- Best QAT Accuracy Updated: 21.76% ---
+[2026-03-17 22:52:21] 5         22.46          22.33          2.1434         
+[2026-03-17 22:52:21] --- Best QAT Accuracy Updated: 22.33% ---
+[2026-03-17 22:53:19] 6         22.94          23.65          2.1219         
+[2026-03-17 22:53:19] --- Best QAT Accuracy Updated: 23.65% ---
+[2026-03-17 22:54:17] 7         23.94          24.66          2.0999         
+[2026-03-17 22:54:17] --- Best QAT Accuracy Updated: 24.66% ---
+[2026-03-17 22:55:14] 8         24.41          25.27          2.0804         
+[2026-03-17 22:55:14] --- Best QAT Accuracy Updated: 25.27% ---
+[2026-03-17 22:56:12] 9         25.08          25.54          2.0629         
+[2026-03-17 22:56:12] --- Best QAT Accuracy Updated: 25.54% ---
+[2026-03-17 22:57:09] 10        25.57          26.68          2.0460         
+[2026-03-17 22:57:09] --- Best QAT Accuracy Updated: 26.68% ---
+[2026-03-17 22:57:09] Converting QAT model to deployed INT8 format...
+[2026-03-17 22:57:11] ==================================================
+[2026-03-17 22:57:11] QAT Process Finished.
+[2026-03-17 22:57:11] Best Simulation Accuracy: 26.68%
+[2026-03-17 22:57:11] Deployment Model Saved: models/resnet18_int8_deploy.pt
+[2026-03-17 22:57:11] Total Training Time: 9.65 mins
+[2026-03-17 22:57:11] ==================================================
+[2026-03-17 22:57:11] Experiment Complete. Ready for Raspberry Pi 5.

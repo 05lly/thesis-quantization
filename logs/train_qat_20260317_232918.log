@@ -1,0 +1,8 @@
+[2026-03-17 23:29:18] QAT Training session started.
+[2026-03-17 23:29:18] Config: Epochs=10, LR=1e-05, Device=cuda
+[2026-03-17 23:29:21] Checkpoint loaded: models/fp32_resnet18.pth
+[2026-03-17 23:29:21] Epoch     TrainAcc       TestAcc        Loss           
+[2026-03-17 23:30:19] 1         99.95          96.49          0.0038         
+[2026-03-17 23:30:19] --- Best QAT Accuracy Updated: 96.49% ---
+[2026-03-17 23:31:16] 2         99.92          96.48          0.0045         
+[2026-03-17 23:32:13] 3         99.92          96.44          0.0044         
