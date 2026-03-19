@@ -9,8 +9,8 @@ from tqdm import tqdm
 
 # --- 1. 参数配置 ---
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-batch_size = 128 
-epochs=30
+batch_size = 128  
+epochs = 30
 lr = 0.01
 
 if os.path.exists("/root/autodl-tmp"):
@@ -34,7 +34,43 @@ def log_message(msg):
 
 log_message(f"Environment: {device} | Batch Size: {batch_size} | Epochs: {epochs} | Mode: FP32-Baseline VGG16")
 
-# --- 3. 数据处理 (对齐 224 分辨率) ---
+# --- 3. 定义可量化的 VGG16 结构 ---
+# 因为 torchvision.models.quantization 没提供 vgg16，我们必须手动封装
+class QuantizableVGG16(nn.Module):
+    def __init__(self, num_classes=10):
+        super(QuantizableVGG16, self).__init__()
+        # 加载标准预训练 VGG16
+        vgg = models.vgg16(weights=models.VGG16_Weights.IMAGENET1K_V1)
+        self.features = vgg.features
+        self.avgpool = vgg.avgpool
+        self.classifier = vgg.classifier
+        # 修改最后一层为 10 分类
+        self.classifier[6] = nn.Linear(self.classifier[6].in_features, num_classes)
+        
+        # 量化桩 (量化训练必须)
+        self.quant = torch.ao.quantization.QuantStub()
+        self.dequant = torch.ao.quantization.DeQuantStub()
+
+    def forward(self, x):
+        x = self.quant(x)
+        x = self.features(x)
+        x = self.avgpool(x)
+        x = torch.flatten(x, 1)
+        x = self.classifier(x)
+        x = self.dequant(x)
+        return x
+
+    def fuse_model(self):
+        # 融合卷积层和 ReLU，提高推理速度和量化精度
+        for m in self.modules():
+            if type(m) == nn.Sequential:
+                # VGG 的 features 是 Sequential，里面是 [Conv, ReLU, Conv, ReLU...]
+                # 我们循环尝试融合相邻的 Conv2d 和 ReLU
+                for i in range(len(m)):
+                    if i + 1 < len(m) and type(m[i]) == nn.Conv2d and type(m[i+1]) == nn.ReLU:
+                        torch.ao.quantization.fuse_modules(m, [str(i), str(i+1)], inplace=True)
+
+# --- 4. 数据处理 ---
 transform_train = transforms.Compose([
     transforms.Resize(224),
     transforms.RandomHorizontalFlip(),
@@ -56,18 +92,15 @@ testloader = torch.utils.data.DataLoader(
     datasets.CIFAR10('./data', train=False, download=True, transform=transform_test),
     batch_size=batch_size, shuffle=False, num_workers=4, pin_memory=True)
 
-# --- 4. 模型加载 (支持量化的 VGG16 结构) ---
-log_message("Loading VGG16 with ImageNet weights...")
-model = models.quantization.vgg16(weights=models.VGG16_Weights.IMAGENET1K_V1, quantize=False)
-# VGG16 的分类器最后是一层 Linear，索引为 6
-model.classifier[6] = nn.Linear(model.classifier[6].in_features, 10)
-model = model.to(device)
+# --- 5. 模型初始化 ---
+log_message("Loading VGG16 and modifying for CIFAR-10...")
+model = QuantizableVGG16(num_classes=10).to(device)
 
 criterion = nn.CrossEntropyLoss()
 optimizer = optim.SGD(model.parameters(), lr=lr, momentum=0.9, weight_decay=1e-4)
 scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
 
-# --- 5. 训练循环 ---
+# --- 6. 训练循环 ---
 best_acc = 0.0
 start_time = time.time()
 log_message(f"{'Epoch':<10}{'TrainAcc':<15}{'TestAcc':<15}{'LR':<15}")
@@ -113,5 +146,5 @@ for epoch in range(epochs):
         log_message(f"New Best Accuracy: {best_acc:.2f}% | Saved to: {save_path}")
 
 log_message("=" * 55)
-log_message("FP32 Baseline Training Finished")
+log_message(f"Final Best FP32 Accuracy: {best_acc:.2f}%")
 log_message(f"Total Training Time: {(time.time()-start_time)/60:.2f} mins")
