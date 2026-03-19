@@ -8,9 +8,9 @@ import time
 import datetime
 from tqdm import tqdm
 
-# --- 1. 参数配置与路径自适应 ---
+# --- 1. 参数配置---
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-torch.backends.quantized.engine = 'qnnpack'  # 树莓派 5 核心加速引擎
+torch.backends.quantized.engine = 'qnnpack'  # 树莓派 5 
 batch_size = 128
 epochs = 15
 lr = 1e-4
@@ -24,7 +24,7 @@ log_dir = "logs"
 os.makedirs(model_dir, exist_ok=True)
 os.makedirs(log_dir, exist_ok=True)
 
-# --- 2. 统一日志函数 (完全对齐 ResNet18 格式) ---
+# --- 2. 日志函数---
 log_filename = os.path.join(log_dir, f"qat_mobilenetv2_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
 
 def log_message(msg):
@@ -36,7 +36,7 @@ def log_message(msg):
 
 log_message(f"Environment: {device} | Batch Size: {batch_size} | Epochs: {epochs}")
 
-# --- 3. 数据处理 (对齐 FP32 的 224 分辨率) ---
+# --- 3. 数据处理 ---
 transform_qat = transforms.Compose([
     transforms.Resize(224),
     transforms.RandomHorizontalFlip(),
@@ -123,7 +123,7 @@ for epoch in range(epochs):
         torch.save(model.state_dict(), os.path.join(model_dir, "mobilenetv2_qat_best.pth"))
         log_message(f"--- Saved best model: {best_acc:.2f}% ---")
 
-# --- 6. 最终转换与双模型保存 ---
+# --- 6. 最终转换与模型保存 ---
 log_message("Converting QAT model to deployed INT8 format...")
 model.load_state_dict(torch.load(os.path.join(model_dir, "mobilenetv2_qat_best.pth"), map_location='cpu'))
 model.to('cpu').eval()
@@ -131,18 +131,18 @@ model.to('cpu').eval()
 # 1. 物理转换 (FP32 -> INT8)
 int8_model = torch.ao.quantization.convert(model, inplace=False)
 
-# 2. 导出 TorchScript (包含结构，树莓派 5 专用)
+# 2. 导出 TorchScript (包含结构，树莓派 5)
 example_input = torch.randn(1, 3, 224, 224)
 traced_model = torch.jit.trace(int8_model, example_input)
 
-# 3. 保存两个关键文件
+# 3. 保存文件
 weights_path = os.path.join(model_dir, "mobilenetv2_int8_final.pth") # 权重
 deploy_path = os.path.join(model_dir, "mobilenetv2_int8_deploy.pt")   # 部署包
 
 torch.save(int8_model.state_dict(), weights_path)
 torch.jit.save(traced_model, deploy_path)
 
-# --- 7. 终极实验报表 ---
+# --- 7. 实验报表 ---
 def get_size_mb(path):
     return os.path.getsize(path) / (1024 * 1024) if os.path.exists(path) else 0
 
