@@ -10,6 +10,7 @@ from tqdm import tqdm
 # --- 1. 参数配置 ---
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 batch_size = 128 
+epochs=30
 lr = 0.01
 
 if os.path.exists("/root/autodl-tmp"):
