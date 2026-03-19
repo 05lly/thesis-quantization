@@ -7,7 +7,7 @@ import time
 import datetime
 from tqdm import tqdm
 
-# --- 1. 参数配置 (严格对齐 MobileNetV2) ---
+# --- 1. 参数配置 ---
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 torch.backends.quantized.engine = 'qnnpack' 
 batch_size = 128
@@ -23,7 +23,7 @@ log_dir = "logs"
 os.makedirs(model_dir, exist_ok=True)
 os.makedirs(log_dir, exist_ok=True)
 
-# --- 2. 统一日志函数 (去除冗余符号) ---
+# --- 2. 日志函数  ---
 log_filename = os.path.join(log_dir, f"qat_resnet18_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
 
 def log_message(msg):
@@ -66,7 +66,7 @@ model.load_state_dict(torch.load(fp32_path, map_location='cpu', weights_only=Tru
 model.to(device)
 log_message(f"FP32 Checkpoint Loaded: {fp32_path}")
 
-# 融合算子 (对齐 is_qat=True 逻辑)
+# 融合算子
 model.eval()
 model.fuse_model(is_qat=True)
 model.train()
@@ -83,7 +83,7 @@ log_message(f"{'Epoch':<10}{'TrainAcc':<15}{'TestAcc':<15}{'Loss':<15}")
 
 for epoch in range(epochs):
     model.train()
-    # 严格对齐：第 5 轮 (epoch index 4) 冻结
+    #第 5 轮 (epoch index 4) 冻结
     if epoch > 3:
         model.apply(torch.ao.quantization.disable_observer)
         model.apply(torch.nn.intrinsic.qat.freeze_bn_stats)
@@ -129,7 +129,7 @@ model.load_state_dict(torch.load(os.path.join(model_dir, "resnet18_qat_best.pth"
 model.to('cpu').eval()
 int8_model = torch.ao.quantization.convert(model, inplace=False)
 
-# 导出部署包 (树莓派 5 专用)
+# 导出部署包 
 example_input = torch.randn(1, 3, 224, 224)
 traced_model = torch.jit.trace(int8_model, example_input)
 
@@ -139,7 +139,7 @@ deploy_path = os.path.join(model_dir, "resnet18_int8_deploy.pt")
 torch.save(int8_model.state_dict(), weights_path)
 torch.jit.save(traced_model, deploy_path)
 
-# --- 7. 实验总结报表 ---
+# --- 7. 报表 ---
 def get_size_mb(path):
     return os.path.getsize(path) / (1024 * 1024) if os.path.exists(path) else 0
 
