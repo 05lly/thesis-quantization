@@ -12,14 +12,14 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 torch.backends.quantized.engine = 'qnnpack'
 batch_size = 128 
 epochs = 15
-lr = 1e-4
+lr = 1e-4 
 
 model_dir = "/root/autodl-tmp/my_backup" if os.path.exists("/root/autodl-tmp") else "models"
 log_dir = "logs"
 os.makedirs(model_dir, exist_ok=True)
 os.makedirs(log_dir, exist_ok=True)
 
-# --- 2. 统一日志函数 ---
+# --- 2. 日志函数 ---
 log_filename = os.path.join(log_dir, f"qat_vgg16_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
 def log_message(msg):
     t = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -28,7 +28,7 @@ def log_message(msg):
     with open(log_filename, "a", encoding="utf-8") as f:
         f.write(full_msg + "\n")
 
-# --- 3. 模型结构 (必须与 FP32 脚本中定义的 QuantizableVGG16 完全一致) ---
+# --- 3. 模型结构 ---
 class QuantizableVGG16(nn.Module):
     def __init__(self, num_classes=10):
         super(QuantizableVGG16, self).__init__()
@@ -50,7 +50,6 @@ class QuantizableVGG16(nn.Module):
         return x
 
     def fuse_model(self):
-        # 遍历 features 模块，融合 Conv2d + ReLU
         for m in self.modules():
             if type(m) == nn.Sequential:
                 for i in range(len(m)):
@@ -82,31 +81,31 @@ if not os.path.exists(fp32_path):
     log_message(f"Error: {fp32_path} not found.")
     exit()
 
-# 加载 FP32 权重
-model.load_state_dict(torch.load(fp32_path, map_location='cpu'))
+# 增加 weights_only=True 
+model.load_state_dict(torch.load(fp32_path, map_location='cpu', weights_only=True))
 model.to(device)
 log_message(f"FP32 Checkpoint Loaded: {fp32_path}")
 
-# 执行算子融合 (必须在 prepare_qat 之前)
+# --- QAT 准备流程 ---
 model.eval()
 model.fuse_model() 
 
-# 配置 QAT
+# 在 prepare_qat 之前必须设为 train 模式
+model.train() 
 model.qconfig = torch.ao.quantization.get_default_qat_qconfig('qnnpack')
 torch.ao.quantization.prepare_qat(model, inplace=True)
-model.train()
 
-optimizer = optim.SGD(model.parameters(), lr=lr, momentum=0.9)
+optimizer = optim.SGD(model.parameters(), lr=lr, momentum=0.9, weight_decay=1e-4)
 criterion = nn.CrossEntropyLoss()
 
-# --- 6. QAT 训练循环 ---
+# --- 6. 训练循环 ---
 best_acc = 0.0
 start_time = time.time()
 log_message(f"{'Epoch':<10}{'TrainAcc':<15}{'TestAcc':<15}{'Loss':<15}")
 
 for epoch in range(epochs):
     model.train()
-    # 冻结量化参数/BN (如有)
+    # 冻结观察器以稳定量化比例
     if epoch > 3:
         model.apply(torch.ao.quantization.disable_observer)
     if epoch > 2:
@@ -147,19 +146,22 @@ for epoch in range(epochs):
         torch.save(model.state_dict(), os.path.join(model_dir, "vgg16_qat_best.pth"))
         log_message(f"New Best QAT Accuracy: {best_acc:.2f}%")
 
-# --- 7. 物理转换与导出 ---
-log_message("Final Step: Converting to INT8 for deployment...")
+# --- 7. 导出最终成果 ---
+log_message("Converting to INT8 and Saving Files...")
 model.load_state_dict(torch.load(os.path.join(model_dir, "vgg16_qat_best.pth"), map_location='cpu'))
 model.to('cpu').eval()
 int8_model = torch.ao.quantization.convert(model, inplace=False)
 
-# 导出部署文件
+# 1. 保存 INT8 权重 (.pth)
+torch.save(int8_model.state_dict(), os.path.join(model_dir, "vgg16_int8_final.pth"))
+
+# 2. 保存部署模型 (.pt)
 example_input = torch.randn(1, 3, 224, 224)
 traced_model = torch.jit.trace(int8_model, example_input)
 deploy_path = os.path.join(model_dir, "vgg16_int8_deploy.pt")
 torch.jit.save(traced_model, deploy_path)
 
-# --- 8. 实验总结报表 ---
+# --- 8. 总结 ---
 def get_size_mb(path):
     return os.path.getsize(path) / (1024 * 1024) if os.path.exists(path) else 0
 
@@ -167,10 +169,8 @@ fp32_size = get_size_mb(fp32_path)
 int8_size = get_size_mb(deploy_path)
 
 log_message("=" * 55)
-log_message("VGG16 QAT Summary Report")
-log_message(f"Best Simulated INT8 Accuracy: {best_acc:.2f}%")
-log_message(f"FP32 Model Size: {fp32_size:.2f} MB")
-log_message(f"INT8 Model Size: {int8_size:.2f} MB")
-log_message(f"Compression Ratio: {fp32_size/int8_size:.2f}x")
-log_message(f"QAT Time: {(time.time()-start_time)/60:.2f} mins")
+log_message(f"VGG16 QAT Report")
+log_message(f"Best Accuracy: {best_acc:.2f}%")
+log_message(f"FP32 Size: {fp32_size:.2f} MB | INT8 Size: {int8_size:.2f} MB")
+log_message(f"Compression: {fp32_size/int8_size:.2f}x")
 log_message("=" * 55)
