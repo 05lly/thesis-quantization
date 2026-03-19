@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 from torchvision import datasets, transforms, models
 import os
+import datetime
 from tqdm import tqdm
 
 # --- 配置 ---
@@ -9,7 +10,7 @@ torch.backends.quantized.engine = 'qnnpack'
 model_dir = "/root/autodl-tmp/my_backup"
 ckpt_path = os.path.join(model_dir, "vgg16_qat_best.pth")
 
-# --- 1. 定义完全一致的结构 ---
+# --- 1. 定义结构 ---
 class QuantizableVGG16(nn.Module):
     def __init__(self, num_classes=10):
         super(QuantizableVGG16, self).__init__()
@@ -30,28 +31,32 @@ class QuantizableVGG16(nn.Module):
         x = self.dequant(x)
         return x
 
-    def fuse_model(self):
+    def fuse_model(self, is_qat=True):
         for m in self.modules():
             if type(m) == nn.Sequential:
                 for i in range(len(m)):
                     if i + 1 < len(m) and type(m[i]) == nn.Conv2d and type(m[i+1]) == nn.ReLU:
                         torch.ao.quantization.fuse_modules(m, [str(i), str(i+1)], inplace=True)
 
-# --- 2. 准备物理转换 ---
 model = QuantizableVGG16(num_classes=10)
+
+# --- 2. 绕过断言的准备动作 ---
 model.train() # 必须先设为 train
-model.fuse_model()
+model.fuse_model(is_qat=True)
 model.qconfig = torch.ao.quantization.get_default_qat_qconfig('qnnpack')
 torch.ao.quantization.prepare_qat(model, inplace=True)
 
-# 加载权重
+# --- 3. 加载权重 ---
+if not os.path.exists(ckpt_path):
+    print(f"❌ Error: {ckpt_path} not found.")
+    exit()
 model.load_state_dict(torch.load(ckpt_path, map_location='cpu'))
 
-# 执行物理转换 (关键一步：Float -> Int8)
+# --- 4. 执行物理转换 (Real INT8) ---
 model.eval() 
 model_int8 = torch.ao.quantization.convert(model, inplace=False)
 
-# --- 3. 实测真 INT8 精度 ---
+# --- 5. 实测 ---
 transform = transforms.Compose([
     transforms.Resize(224),
     transforms.ToTensor(),
@@ -67,6 +72,23 @@ with torch.no_grad():
         _, pred = torch.max(outputs, 1)
         correct += (pred == labels).sum().item()
 
-print(f"\n" + "="*45)
-print(f"VGG16 REAL INT8 Final Accuracy: {100. * correct / 10000:.2f}%")
-print("="*45)
+# --- 6. 统一写入 Log 记录 ---
+acc_result = 100. * correct / 10000
+log_dir = "logs"
+log_path = os.path.join(log_dir, "verify_results.log")
+
+if not os.path.exists(log_dir):
+    os.makedirs(log_dir)
+
+timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+log_content = f"""
+[{timestamp}]
+========================================
+VGG16 REAL INT8 Accuracy: {acc_result:.2f}%
+========================================
+"""
+
+with open(log_path, "a", encoding="utf-8") as f:
+    f.write(log_content)
+
+print(log_content)
