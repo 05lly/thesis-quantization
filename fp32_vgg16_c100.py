@@ -48,18 +48,28 @@ class PureVGG16(nn.Module):
         return x
 
 # --- 4. 数据处理 ---
+
+data_dir = '/root/autodl-tmp/data' 
+
+transform_train = transforms.Compose([
+    transforms.Resize(224),
+    transforms.RandomHorizontalFlip(),
+    transforms.ToTensor(),
+    transforms.Normalize((0.5071, 0.4865, 0.4409), (0.2673, 0.2564, 0.2761)),
+])
+
 transform_test = transforms.Compose([
     transforms.Resize(224),
     transforms.ToTensor(),
     transforms.Normalize((0.5071, 0.4865, 0.4409), (0.2673, 0.2564, 0.2761)),
 ])
+
 trainloader = torch.utils.data.DataLoader(
-    datasets.CIFAR100('./data', train=True, download=True, 
-    transform=transforms.Compose([transforms.Resize(224), transforms.RandomHorizontalFlip(), transforms.ToTensor(), transforms.Normalize((0.5071, 0.4865, 0.4409), (0.2673, 0.2564, 0.2761))])),
+    datasets.CIFAR100(root=data_dir, train=True, download=False, transform=transform_train),
     batch_size=batch_size, shuffle=True, num_workers=4)
 
 testloader = torch.utils.data.DataLoader(
-    datasets.CIFAR100('./data', train=False, download=True, transform=transform_test),
+    datasets.CIFAR100(root=data_dir, train=False, download=False, transform=transform_test),
     batch_size=batch_size, shuffle=False, num_workers=4)
 
 # --- 5. 训练 ---

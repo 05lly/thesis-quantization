@@ -31,6 +31,8 @@ def log_message(msg):
 log_message(f"Env: {device} | Dataset: CIFAR-100 | Mode: Pure FP32 Baseline")
 
 # --- 3. 数据处理  ---
+ata_dir = '/root/autodl-tmp/data' 
+
 transform_train = transforms.Compose([
     transforms.Resize(224),
     transforms.RandomHorizontalFlip(),
@@ -45,12 +47,13 @@ transform_test = transforms.Compose([
 ])
 
 trainloader = torch.utils.data.DataLoader(
-    datasets.CIFAR100('./data', train=True, download=True, transform=transform_train),
+    datasets.CIFAR100(root=data_dir, train=True, download=False, transform=transform_train),
     batch_size=batch_size, shuffle=True, num_workers=4)
 
 testloader = torch.utils.data.DataLoader(
-    datasets.CIFAR100('./data', train=False, download=True, transform=transform_test),
+    datasets.CIFAR100(root=data_dir, train=False, download=False, transform=transform_test),
     batch_size=batch_size, shuffle=False, num_workers=4)
+
 
 # --- 4. 模型加载  ---
 log_message("Loading Pure FP32 ResNet18...")
