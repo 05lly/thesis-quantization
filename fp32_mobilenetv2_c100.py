@@ -18,7 +18,7 @@ log_dir = "logs"
 os.makedirs(model_dir, exist_ok=True)
 os.makedirs(log_dir, exist_ok=True)
 
-# --- 2. 统一日志 ---
+# --- 2. 日志 ---
 log_filename = os.path.join(log_dir, f"fp32_mobilenetv2_c100_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
 
 def log_message(msg):
@@ -30,7 +30,7 @@ def log_message(msg):
 
 log_message(f"Env: {device} | Dataset: CIFAR-100 | Mode: FP32-Baseline MobileNetV2")
 
-# --- 3. 模型定义 (纯净版本) ---
+# --- 3. 模型定义  ---
 log_message("Loading Pure FP32 MobileNetV2...")
 model = models.mobilenet_v2(weights=models.MobileNet_V2_Weights.IMAGENET1K_V1)
 model.classifier[1] = nn.Linear(model.last_channel, 100)
@@ -82,7 +82,7 @@ for epoch in range(epochs):
         best_acc = val_acc
         torch.save(model.state_dict(), os.path.join(model_dir, "fp32_mobilenetv2_c100_best.pth"))
 
-# --- 6. 总结 (Latency) ---
+# --- 6. 总结  ---
 model.eval()
 dummy = torch.randn(1, 3, 224, 224).to(device)
 with torch.no_grad():
