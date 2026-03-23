@@ -87,16 +87,18 @@ for epoch in range(epochs):
         best_acc = val_acc
         torch.save(model.state_dict(), os.path.join(model_dir, "fp32_mobilenetv2_c100_best.pth"))
 
-# --- 6. 延迟测试 ---
+# --- 6. 实验总结  ---
 model.eval()
 dummy = torch.randn(1, 3, 224, 224).to(device)
 with torch.no_grad():
-    for _ in range(50): _ = model(dummy)
+    for _ in range(50): _ = model(dummy)  # 预热
     st = time.time()
     for _ in range(100): _ = model(dummy)
-    lat = (time.time() - st) / 100 * 1000
+    lat = (time.time() - st) / 100 * 1000  # ms/image
 
 log_message("=" * 55)
+log_message("FP32 Baseline Training Finished")  # 补全了这行横旗
 log_message(f"Best CIFAR-100 Accuracy: {best_acc:.2f}%")
-log_message(f"Latency: {lat:.2f} ms/image")
+log_message(f"FP32 Inference Latency: {lat:.2f} ms/image")
+log_message(f"Total Training Time: {(time.time()-start_time)/60:.2f} mins") # 补全了总耗时
 log_message("=" * 55)
