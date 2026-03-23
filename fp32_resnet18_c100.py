@@ -18,7 +18,7 @@ log_dir = "logs"
 os.makedirs(model_dir, exist_ok=True)
 os.makedirs(log_dir, exist_ok=True)
 
-# --- 2. 日志函数 ---
+# --- 2. 统一日志函数 ---
 log_filename = os.path.join(log_dir, f"fp32_resnet18_c100_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
 
 def log_message(msg):
@@ -28,9 +28,9 @@ def log_message(msg):
     with open(log_filename, "a", encoding="utf-8") as f:
         f.write(full_msg + "\n")
 
-log_message(f"Env: {device} | Dataset: CIFAR-100 | Mode: Pure FP32 Baseline")
+log_message(f"Env: {device} | Dataset: CIFAR-100 | Mode: FP32-Baseline ResNet18")
 
-# --- 3. 数据处理  ---
+# --- 3. 数据处理 (CIFAR-100) ---
 data_dir = '/root/autodl-tmp/data' 
 
 transform_train = transforms.Compose([
@@ -47,17 +47,17 @@ transform_test = transforms.Compose([
 ])
 
 trainloader = torch.utils.data.DataLoader(
-    datasets.CIFAR100(root=data_dir, train=True, download=False, transform=transform_train),
-    batch_size=batch_size, shuffle=True, num_workers=4)
+    datasets.CIFAR100(root=data_dir, train=True, download=True, transform=transform_train),
+    batch_size=batch_size, shuffle=True, num_workers=4, pin_memory=True)
 
 testloader = torch.utils.data.DataLoader(
-    datasets.CIFAR100(root=data_dir, train=False, download=False, transform=transform_test),
-    batch_size=batch_size, shuffle=False, num_workers=4)
-
+    datasets.CIFAR100(root=data_dir, train=False, download=True, transform=transform_test),
+    batch_size=batch_size, shuffle=False, num_workers=4, pin_memory=True)
 
 # --- 4. 模型加载  ---
-log_message("Loading Pure FP32 ResNet18...")
-model = models.resnet18(weights=models.ResNet18_Weights.IMAGENET1K_V1)
+log_message("Loading Quantization-ready ResNet18...")
+# 使用 quantization.resnet18 
+model = models.quantization.resnet18(weights=models.ResNet18_Weights.IMAGENET1K_V1, quantize=False)
 model.fc = nn.Linear(model.fc.in_features, 100)
 model = model.to(device)
 
@@ -73,7 +73,7 @@ log_message(f"{'Epoch':<10}{'TrainAcc':<15}{'TestAcc':<15}{'LR':<15}")
 for epoch in range(epochs):
     model.train()
     correct, total = 0, 0
-    for inputs, labels in tqdm(trainloader, desc=f"FP32 Epoch {epoch+1}", leave=False):
+    for inputs, labels in tqdm(trainloader, desc=f"Epoch {epoch+1}", leave=False):
         inputs, labels = inputs.to(device), labels.to(device)
         optimizer.zero_grad()
         outputs = model(inputs)
@@ -103,18 +103,17 @@ for epoch in range(epochs):
         best_acc = val_acc
         torch.save(model.state_dict(), os.path.join(model_dir, "fp32_resnet18_c100_best.pth"))
 
-# --- 6. 实验总结 ---
+# --- 6. 总结与延迟测试 ---
 model.eval()
-dummy_input = torch.randn(1, 3, 224, 224).to(device)
+dummy = torch.randn(1, 3, 224, 224).to(device)
 with torch.no_grad():
-    for _ in range(50): _ = model(dummy_input) # 预热
-    start_lat = time.time()
-    for _ in range(100): _ = model(dummy_input)
-    avg_latency = (time.time() - start_lat) / 100 * 1000 # ms
+    for _ in range(50): _ = model(dummy)
+    st = time.time()
+    for _ in range(100): _ = model(dummy)
+    lat = (time.time() - st) / 100 * 1000
 
 log_message("=" * 55)
-log_message("FP32 Baseline Training Finished")
 log_message(f"Best CIFAR-100 Accuracy: {best_acc:.2f}%")
-log_message(f"FP32 Inference Latency: {avg_latency:.2f} ms/image")
+log_message(f"FP32 Inference Latency: {lat:.2f} ms/image")
 log_message(f"Total Training Time: {(time.time()-start_time)/60:.2f} mins")
 log_message("=" * 55)

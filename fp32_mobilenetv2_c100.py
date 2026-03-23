@@ -7,7 +7,7 @@ import time
 import datetime
 from tqdm import tqdm
 
-# --- 1. 参数配置 ---
+# --- 1. 配置 ---
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 batch_size = 128
 epochs = 30
@@ -28,39 +28,30 @@ def log_message(msg):
     with open(log_filename, "a", encoding="utf-8") as f:
         f.write(full_msg + "\n")
 
-log_message(f"Env: {device} | Dataset: CIFAR-100 | Mode: FP32-Baseline MobileNetV2")
+log_message(f"Env: {device} | Mode: FP32-Baseline MobileNetV2")
 
-# --- 3. 模型定义  ---
-log_message("Loading Pure FP32 MobileNetV2...")
-model = models.mobilenet_v2(weights=models.MobileNet_V2_Weights.IMAGENET1K_V1)
+# --- 3. 模型 ---
+log_message("Loading Quantization-ready MobileNetV2...")
+# 使用 quantization 模块下的定义
+model = models.quantization.mobilenet_v2(weights=models.MobileNet_V2_Weights.IMAGENET1K_V1, quantize=False)
 model.classifier[1] = nn.Linear(model.last_channel, 100)
 model = model.to(device)
 
-# --- 4. 数据处理 ---
+# --- 4. 数据处理  ---
 data_dir = '/root/autodl-tmp/data' 
-
-transform_train = transforms.Compose([
-    transforms.Resize(224),
-    transforms.RandomHorizontalFlip(),
-    transforms.ToTensor(),
-    transforms.Normalize((0.5071, 0.4865, 0.4409), (0.2673, 0.2564, 0.2761)),
-])
-
-transform_test = transforms.Compose([
-    transforms.Resize(224),
-    transforms.ToTensor(),
-    transforms.Normalize((0.5071, 0.4865, 0.4409), (0.2673, 0.2564, 0.2761)),
-])
+norm = transforms.Normalize((0.5071, 0.4865, 0.4409), (0.2673, 0.2564, 0.2761))
 
 trainloader = torch.utils.data.DataLoader(
-    datasets.CIFAR100(root=data_dir, train=True, download=False, transform=transform_train),
-    batch_size=batch_size, shuffle=True, num_workers=4)
+    datasets.CIFAR100(data_dir, train=True, download=True, transform=transforms.Compose([
+        transforms.Resize(224), transforms.RandomHorizontalFlip(), transforms.ToTensor(), norm])),
+    batch_size=batch_size, shuffle=True, num_workers=4, pin_memory=True)
 
 testloader = torch.utils.data.DataLoader(
-    datasets.CIFAR100(root=data_dir, train=False, download=False, transform=transform_test),
-    batch_size=batch_size, shuffle=False, num_workers=4)
+    datasets.CIFAR100(data_dir, train=False, download=True, transform=transforms.Compose([
+        transforms.Resize(224), transforms.ToTensor(), norm])),
+    batch_size=batch_size, shuffle=False, num_workers=4, pin_memory=True)
 
-# --- 5. 训练 ---
+# --- 5. 训练循环 ---
 optimizer = optim.SGD(model.parameters(), lr=lr, momentum=0.9, weight_decay=1e-4)
 scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
 criterion = nn.CrossEntropyLoss()
@@ -71,7 +62,7 @@ log_message(f"{'Epoch':<10}{'TrainAcc':<15}{'TestAcc':<15}{'LR':<15}")
 for epoch in range(epochs):
     model.train()
     correct, total = 0, 0
-    for inputs, labels in tqdm(trainloader, desc=f"FP32 MBV2 Epoch {epoch+1}", leave=False):
+    for inputs, labels in tqdm(trainloader, desc=f"MBV2 Epoch {epoch+1}", leave=False):
         inputs, labels = inputs.to(device), labels.to(device)
         optimizer.zero_grad()
         outputs = model(inputs)
@@ -96,7 +87,7 @@ for epoch in range(epochs):
         best_acc = val_acc
         torch.save(model.state_dict(), os.path.join(model_dir, "fp32_mobilenetv2_c100_best.pth"))
 
-# --- 6. 总结  ---
+# --- 6. 延迟测试 ---
 model.eval()
 dummy = torch.randn(1, 3, 224, 224).to(device)
 with torch.no_grad():
@@ -106,8 +97,6 @@ with torch.no_grad():
     lat = (time.time() - st) / 100 * 1000
 
 log_message("=" * 55)
-log_message("FP32 Baseline Training Finished")
 log_message(f"Best CIFAR-100 Accuracy: {best_acc:.2f}%")
-log_message(f"FP32 Inference Latency: {lat:.2f} ms/image")
-log_message(f"Total Training Time: {(time.time()-start_time)/60:.2f} mins")
+log_message(f"Latency: {lat:.2f} ms/image")
 log_message("=" * 55)
