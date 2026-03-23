@@ -7,21 +7,22 @@ import time
 import datetime
 from tqdm import tqdm
 
-# --- 1. 参数配置 ---
+# --- 1. 核心参数配置 ---
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-torch.backends.quantized.engine = 'qnnpack' 
-
 batch_size = 128
-epochs = 20           # 稍微增加 QAT 轮次，让精度更稳
-lr = 5e-5             # 极低学习率，保护已经练好的 FP32 权重
+epochs = 120          # 增加到 120 轮，确保充分收敛
+lr = 0.01             # 初始学习率
+weight_decay = 5e-4    # 增大权重衰减，抑制 VGG16 过拟合
 
+# 路径配置
 model_dir = "/root/autodl-tmp/my_backup" if os.path.exists("/root/autodl-tmp") else "models"
 log_dir = "logs"
 os.makedirs(model_dir, exist_ok=True)
 os.makedirs(log_dir, exist_ok=True)
 
-# --- 2. 日志函数 ---
-log_filename = os.path.join(log_dir, f"qat_vgg16_enhanced_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
+# --- 2. 日志系统 ---
+log_filename = os.path.join(log_dir, f"fp32_vgg16_enhanced_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
+
 def log_message(msg):
     t = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     full_msg = f"[{t}] {msg}"
@@ -29,16 +30,18 @@ def log_message(msg):
     with open(log_filename, "a", encoding="utf-8") as f:
         f.write(full_msg + "\n")
 
-# --- 3. 模型结构 ---
+# --- 3. 可量化 VGG16 结构 ---
 class QuantizableVGG16(nn.Module):
     def __init__(self, num_classes=100):
         super(QuantizableVGG16, self).__init__()
-        vgg = models.vgg16(weights=None) 
+        # 加载 ImageNet 预训练权重
+        vgg = models.vgg16(weights=models.VGG16_Weights.IMAGENET1K_V1)
         self.features = vgg.features
         self.avgpool = vgg.avgpool
         self.classifier = vgg.classifier
+        # 修改分类层为 CIFAR-100 的 100 类
         self.classifier[6] = nn.Linear(self.classifier[6].in_features, num_classes)
-        # 插入量化/反量化节点
+        # 量化占位符
         self.quant = torch.ao.quantization.QuantStub()
         self.dequant = torch.ao.quantization.DeQuantStub()
 
@@ -51,21 +54,14 @@ class QuantizableVGG16(nn.Module):
         x = self.dequant(x)
         return x
 
-    def fuse_model(self):
-        # 融合 Conv + ReLU 以提高量化精度和速度
-        for m in self.modules():
-            if type(m) == nn.Sequential:
-                for i in range(len(m)):
-                    if i + 1 < len(m) and type(m[i]) == nn.Conv2d and type(m[i+1]) == nn.ReLU:
-                        torch.ao.quantization.fuse_modules(m, [str(i), str(i+1)], inplace=True)
-
-# --- 4. 数据处理---
+# --- 4. 高强度数据增强 ---
 norm = transforms.Normalize((0.5071, 0.4865, 0.4409), (0.2673, 0.2564, 0.2761))
 
-transform_qat = transforms.Compose([
+transform_train = transforms.Compose([
     transforms.Resize(256),
-    transforms.RandomCrop(224),           
-    transforms.RandomHorizontalFlip(),
+    transforms.RandomCrop(224),             # 随机裁剪
+    transforms.RandomHorizontalFlip(),      # 随机水平翻转
+    transforms.ColorJitter(0.2, 0.2, 0.2),  # 颜色抖动，防止过拟合
     transforms.ToTensor(),
     norm
 ])
@@ -76,53 +72,32 @@ transform_test = transforms.Compose([
     norm
 ])
 
-train_loader = torch.utils.data.DataLoader(
-    datasets.CIFAR100('/root/autodl-tmp/data', train=True, download=True, transform=transform_qat),
-    batch_size=batch_size, shuffle=True, num_workers=4, pin_memory=True)
+trainloader = torch.utils.data.DataLoader(
+    datasets.CIFAR100('/root/autodl-tmp/data', train=True, download=True, transform=transform_train),
+    batch_size=batch_size, shuffle=True, num_workers=8, pin_memory=True)
 
-test_loader = torch.utils.data.DataLoader(
+testloader = torch.utils.data.DataLoader(
     datasets.CIFAR100('/root/autodl-tmp/data', train=False, download=True, transform=transform_test),
-    batch_size=batch_size, shuffle=False, num_workers=4, pin_memory=True)
+    batch_size=batch_size, shuffle=False, num_workers=8, pin_memory=True)
 
-# --- 5. 模型加载与 QAT 准备 ---
-log_message(f"Initializing QAT... Target: {device} | LR: {lr}")
-model = QuantizableVGG16(num_classes=100)
-
-fp32_path = os.path.join(model_dir, "new_fp32_vgg16_c100_best.pth")
-if not os.path.exists(fp32_path):
-    log_message(f"Error: {fp32_path} not found. Please check the path.")
-    exit()
-
-model.load_state_dict(torch.load(fp32_path, map_location='cpu', weights_only=True))
-model.to(device)
-log_message(f"Successfully Loaded Optimized FP32 Checkpoint: {fp32_path}")
-
-# --- QAT ---
-model.eval()
-model.fuse_model()  # 1. 算子融合
-model.train() 
-
-# 2. 配置量化策略
-model.qconfig = torch.ao.quantization.get_default_qat_qconfig('qnnpack')
-torch.ao.quantization.prepare_qat(model, inplace=True) # 3. 插入伪量化算子
-
-optimizer = optim.SGD(model.parameters(), lr=lr, momentum=0.9, weight_decay=1e-4)
+# --- 5. 初始化模型与优化器 ---
+model = QuantizableVGG16(num_classes=100).to(device)
 criterion = nn.CrossEntropyLoss()
+optimizer = optim.SGD(model.parameters(), lr=lr, momentum=0.9, weight_decay=weight_decay)
 
-# --- 6. 训练循环 ---
+# 使用余弦退火， eta_min 设为极小值，让学习率平滑下降
+scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs, eta_min=1e-6)
+
+# --- 6. 训练与验证逻辑 ---
 best_acc = 0.0
 start_time = time.time()
+log_message("Starting Enhanced FP32 Training for VGG16...")
 
 for epoch in range(epochs):
     model.train()
-    
-    if epoch > 7:
-        model.apply(torch.ao.quantization.disable_observer)
-    if epoch > 5:
-        model.apply(torch.nn.intrinsic.qat.freeze_bn_stats)
-    
     running_loss, correct, total = 0.0, 0, 0
-    for inputs, labels in tqdm(train_loader, desc=f"QAT Epoch {epoch+1}", leave=False):
+    
+    for inputs, labels in tqdm(trainloader, desc=f"Epoch {epoch+1}/{epochs}", leave=False):
         inputs, labels = inputs.to(device), labels.to(device)
         optimizer.zero_grad()
         outputs = model(inputs)
@@ -130,43 +105,41 @@ for epoch in range(epochs):
         loss.backward()
         optimizer.step()
         
-        running_loss += loss.item() * inputs.size(0)
+        running_loss += loss.item()
         _, pred = torch.max(outputs, 1)
         total += labels.size(0)
         correct += (pred == labels).sum().item()
-
-    # 验证模拟量化精度
+    
+    scheduler.step()
+    
+    # 验证
     model.eval()
-    test_correct = 0
+    t_corr, t_tot = 0, 0
     with torch.no_grad():
-        for inputs, labels in test_loader:
+        for inputs, labels in testloader:
             inputs, labels = inputs.to(device), labels.to(device)
             outputs = model(inputs)
             _, pred = torch.max(outputs, 1)
-            test_correct += (pred == labels).sum().item()
+            t_tot += labels.size(0)
+            t_corr += (pred == labels).sum().item()
     
-    val_acc = 100. * test_correct / len(test_loader.dataset)
+    val_acc = 100. * t_corr / t_tot
     train_acc = 100. * correct / total
+    current_lr = scheduler.get_last_lr()[0]
     
-    log_message(f"Epoch {epoch+1:02d} | TrainAcc: {train_acc:.2f}% | TestAcc: {val_acc:.2f}%")
+    log_message(f"Epoch {epoch+1:03d} | TrainAcc: {train_acc:.2f}% | TestAcc: {val_acc:.2f}% | LR: {current_lr:.6f}")
     
+    # 保存最佳模型
     if val_acc > best_acc:
         best_acc = val_acc
-        torch.save(model.state_dict(), os.path.join(model_dir, "vgg16_qat_optimized_best.pth"))
-        log_message(f"--- Saved New Best QAT Accuracy: {best_acc:.2f}% ---")
+        save_path = os.path.join(model_dir, "new_fp32_vgg16_c100_best.pth")
+        torch.save(model.state_dict(), save_path)
+        log_message(f"*** New Best: {best_acc:.2f}% (Saved) ***")
 
-# --- 7. 导出最终量化模型 (INT8) ---
-log_message("Final Step: Converting FakeQuant to Real INT8...")
-model.load_state_dict(torch.load(os.path.join(model_dir, "new_vgg16_qat_optimized_best.pth"), map_location='cpu'))
-model.to('cpu').eval()
-int8_model = torch.ao.quantization.convert(model, inplace=False)
-
-# 保存最终推理文件 (.pt)
-example_input = torch.randn(1, 3, 224, 224)
-traced_model = torch.jit.trace(int8_model, example_input)
-torch.jit.save(traced_model, os.path.join(model_dir, "new_vgg16_int8_final_deploy.pt"))
-
-log_message("=" * 55)
-log_message(f"QAT Process Finished. Best Accuracy: {best_acc:.2f}%")
-log_message(f"Deployment Model Saved: new_vgg16_int8_final_deploy.pt")
-log_message("=" * 55)
+# --- 7. 总结 ---
+total_mins = (time.time() - start_time) / 60
+log_message("=" * 60)
+log_message(f"Enhanced Training Finished!")
+log_message(f"Best Accuracy: {best_acc:.2f}%")
+log_message(f"Total Time: {total_mins:.2f} mins")
+log_message("=" * 60)
