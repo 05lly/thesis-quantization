@@ -12,7 +12,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 torch.backends.quantized.engine = 'qnnpack' 
 
 batch_size = 128
-epochs = 20           
+epochs = 20         
 lr = 5e-5             
 
 model_dir = "/root/autodl-tmp/my_backup" if os.path.exists("/root/autodl-tmp") else "models"
@@ -21,7 +21,7 @@ os.makedirs(model_dir, exist_ok=True)
 os.makedirs(log_dir, exist_ok=True)
 
 # --- 2. 日志函数 ---
-log_filename = os.path.join(log_dir, f"qat_vgg16_enhanced_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
+log_filename = os.path.join(log_dir, f"qat_vgg16_final_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
 def log_message(msg):
     t = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     full_msg = f"[{t}] {msg}"
@@ -38,6 +38,7 @@ class QuantizableVGG16(nn.Module):
         self.avgpool = vgg.avgpool
         self.classifier = vgg.classifier
         self.classifier[6] = nn.Linear(self.classifier[6].in_features, num_classes)
+        # 量化桩
         self.quant = torch.ao.quantization.QuantStub()
         self.dequant = torch.ao.quantization.DeQuantStub()
 
@@ -51,13 +52,15 @@ class QuantizableVGG16(nn.Module):
         return x
 
     def fuse_model(self):
+        log_message("Merging Conv and ReLU layers...")
         for m in self.modules():
             if type(m) == nn.Sequential:
                 for i in range(len(m)):
                     if i + 1 < len(m) and type(m[i]) == nn.Conv2d and type(m[i+1]) == nn.ReLU:
                         torch.ao.quantization.fuse_modules(m, [str(i), str(i+1)], inplace=True)
 
-# --- 4. 数据处理 ---
+# --- 4. 数据处理 (CIFAR-100) ---
+data_dir = '/root/autodl-tmp/data' 
 norm = transforms.Normalize((0.5071, 0.4865, 0.4409), (0.2673, 0.2564, 0.2761))
 transform_qat = transforms.Compose([
     transforms.Resize(256),
@@ -81,20 +84,20 @@ test_loader = torch.utils.data.DataLoader(
     batch_size=batch_size, shuffle=False, num_workers=4, pin_memory=True)
 
 # --- 5. 模型加载与 QAT 准备 ---
-log_message(f"Initializing QAT... Target: {device}")
+log_message(f"Initializing QAT Mode... Target Device: {device}")
 model = QuantizableVGG16(num_classes=100)
 
-# 加载之前跑完的优化版 FP32 权重
+# 加载之前跑完的优化版 FP32 权重 
 fp32_path = os.path.join(model_dir, "new_fp32_vgg16_c100_best.pth")
 if not os.path.exists(fp32_path):
-    log_message(f"Error: {fp32_path} not found.")
+    log_message(f"Error: {fp32_path} not found. Ensure FP32 training is finished.")
     exit()
 
-model.load_state_dict(torch.load(fp32_path, map_location='cpu', weights_only=True))
+model.load_state_dict(torch.load(fp32_path, map_location='cpu'))
 model.to(device)
-log_message(f"Loaded FP32 Checkpoint: {fp32_path}")
+log_message(f"Successfully Loaded FP32 Checkpoint: {fp32_path}")
 
-# QAT 准备
+# QAT 准备流程
 model.eval()
 model.fuse_model() 
 model.train() 
@@ -107,15 +110,16 @@ criterion = nn.CrossEntropyLoss()
 # --- 6. 训练循环 ---
 best_acc = 0.0
 start_time = time.time()
-# 定义本轮 QAT 最佳权重的保存路径
 best_qat_ckpt = os.path.join(model_dir, "new_vgg16_qat_optimized_best.pth")
+
+log_message(f"Starting QAT Training for {epochs} epochs...")
 
 for epoch in range(epochs):
     model.train()
-    if epoch > 7:
-        model.apply(torch.ao.quantization.disable_observer)
     if epoch > 5:
         model.apply(torch.nn.intrinsic.qat.freeze_bn_stats)
+    if epoch > 15:
+        model.apply(torch.ao.quantization.disable_observer)
     
     running_loss, correct, total = 0.0, 0, 0
     for inputs, labels in tqdm(train_loader, desc=f"QAT Epoch {epoch+1}", leave=False):
@@ -131,6 +135,7 @@ for epoch in range(epochs):
         total += labels.size(0)
         correct += (pred == labels).sum().item()
 
+    # 验证环节
     model.eval()
     test_correct = 0
     with torch.no_grad():
@@ -149,20 +154,34 @@ for epoch in range(epochs):
         torch.save(model.state_dict(), best_qat_ckpt)
         log_message(f"--- Saved New Best QAT: {best_acc:.2f}% ---")
 
-# --- 7. 导出最终量化模型 (INT8) ---
-log_message("Final Step: Converting FakeQuant to Real INT8...")
-# 加载刚才 QAT 跑出来的最佳权重
+# --- 7. 导出最终量化模型  ---
+log_message("Final Step: Converting FakeQuant to Real INT8 with JIT Freeze...")
 model.load_state_dict(torch.load(best_qat_ckpt, map_location='cpu'))
 model.to('cpu').eval()
 int8_model = torch.ao.quantization.convert(model, inplace=False)
 
-# 保存最终推理文件
+# 使用 JIT Trace 和 Freeze 优化推理
 example_input = torch.randn(1, 3, 224, 224)
 traced_model = torch.jit.trace(int8_model, example_input)
+frozen_model = torch.jit.freeze(traced_model)
+
 deploy_path = os.path.join(model_dir, "new_vgg16_int8_final_deploy.pt")
-torch.jit.save(traced_model, deploy_path)
+torch.jit.save(frozen_model, deploy_path)
+
+# --- 8. 总结 ---
+total_mins = (time.time() - start_time) / 60
+
+def get_size_mb(path):
+    return os.path.getsize(path) / (1024 * 1024) if os.path.exists(path) else 0
+
+fp32_size = get_size_mb(fp32_path)
+int8_size = get_size_mb(deploy_path)
 
 log_message("=" * 55)
-log_message(f"QAT Process Finished. Best Accuracy: {best_acc:.2f}%")
-log_message(f"Deployment Model Saved: {deploy_path}")
+log_message(f"VGG16 QAT Final Report")
+log_message(f"Best Accuracy: {best_acc:.2f}%")
+log_message(f"Total Time: {total_mins:.2f} mins")
+log_message(f"FP32 Size: {fp32_size:.2f} MB | INT8 Size: {int8_size:.2f} MB")
+log_message(f"Compression Ratio: {fp32_size/int8_size:.2f}x")
+log_message(f"Deployment Model: {deploy_path}")
 log_message("=" * 55)
