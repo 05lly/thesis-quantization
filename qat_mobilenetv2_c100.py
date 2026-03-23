@@ -37,6 +37,7 @@ def log_message(msg):
 log_message(f"Environment: {device} | Task: CIFAR-100 QAT | Batch Size: {batch_size} | LR: {lr}")
 
 # --- 3. 数据处理  ---
+data_dir = '/root/autodl-tmp/data' 
 transform_qat = transforms.Compose([
     transforms.Resize(224),
     transforms.RandomHorizontalFlip(),
@@ -56,7 +57,7 @@ test_loader = torch.utils.data.DataLoader(
 model = mobilenet_v2(weights=None, quantize=False)
 model.classifier[1] = nn.Linear(model.last_channel, 100) # 类别修改为 100
 
-fp32_path = os.path.join(model_dir, "fp32_mobilenetv2_best.pth")
+fp32_path = os.path.join(model_dir, "fp32_mobilenetv2_c100_best.pth")
 if not os.path.exists(fp32_path):
     log_message(f"Error: {fp32_path} not found! Please run CIFAR-100 FP32 training first.")
     exit()

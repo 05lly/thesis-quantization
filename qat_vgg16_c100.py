@@ -60,6 +60,7 @@ class QuantizableVGG16(nn.Module):
                         torch.ao.quantization.fuse_modules(m, [str(i), str(i+1)], inplace=True)
 
 # --- 4. 数据处理 (CIFAR-100) ---
+data_dir = '/root/autodl-tmp/data' 
 transform_qat = transforms.Compose([
     transforms.Resize(224),
     transforms.RandomHorizontalFlip(),
@@ -79,7 +80,7 @@ test_loader = torch.utils.data.DataLoader(
 log_message(f"Initializing Quantizable VGG16 for CIFAR-100 (Batch: {batch_size}, LR: {lr})...")
 model = QuantizableVGG16(num_classes=100)
 
-fp32_path = os.path.join(model_dir, "fp32_vgg16_best.pth")
+fp32_path = os.path.join(model_dir, "fp32_vgg16_c100_best.pth")
 if not os.path.exists(fp32_path):
     log_message(f"Error: {fp32_path} not found.")
     exit()

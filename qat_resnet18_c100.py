@@ -32,6 +32,7 @@ def log_message(msg):
 log_message(f"Environment: {device} | Task: CIFAR-100 QAT | Batch Size: {batch_size}")
 
 # --- 3. 数据处理 ---
+data_dir = '/root/autodl-tmp/data' 
 transform_qat = transforms.Compose([
     transforms.Resize(224),
     transforms.RandomHorizontalFlip(),
@@ -51,7 +52,7 @@ test_loader = torch.utils.data.DataLoader(
 model = models.quantization.resnet18(weights=None, quantize=False)
 model.fc = nn.Linear(model.fc.in_features, 100) # 修改为 100 类
 
-fp32_path = os.path.join(model_dir, "fp32_resnet18_best.pth")
+fp32_path = os.path.join(model_dir, "fp32_resnet18_c100_best.pth")
 if not os.path.exists(fp32_path):
     log_message(f"Error: {fp32_path} not found.")
     exit()
