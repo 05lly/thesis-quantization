@@ -31,7 +31,7 @@ def log_message(msg):
 log_message(f"Env: {device} | Dataset: CIFAR-100 | Mode: Pure FP32 Baseline")
 
 # --- 3. 数据处理  ---
-ata_dir = '/root/autodl-tmp/data' 
+data_dir = '/root/autodl-tmp/data' 
 
 transform_train = transforms.Compose([
     transforms.Resize(224),

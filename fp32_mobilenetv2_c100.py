@@ -37,7 +37,7 @@ model.classifier[1] = nn.Linear(model.last_channel, 100)
 model = model.to(device)
 
 # --- 4. 数据处理 ---
-ata_dir = '/root/autodl-tmp/data' 
+data_dir = '/root/autodl-tmp/data' 
 
 transform_train = transforms.Compose([
     transforms.Resize(224),
