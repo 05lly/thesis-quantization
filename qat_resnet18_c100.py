@@ -41,11 +41,11 @@ transform_qat = transforms.Compose([
 ])
 
 train_loader = torch.utils.data.DataLoader(
-    datasets.CIFAR100('./data', train=True, download=True, transform=transform_qat),
+    datasets.CIFAR100(data_dir, train=True, download=True, transform=transform_qat),
     batch_size=batch_size, shuffle=True, num_workers=4, pin_memory=True)
 
 test_loader = torch.utils.data.DataLoader(
-    datasets.CIFAR100('./data', train=False, download=True, transform=transform_qat),
+    datasets.CIFAR100(data_dir, train=False, download=True, transform=transform_qat),
     batch_size=batch_size, shuffle=False, num_workers=4, pin_memory=True)
 
 # --- 4. 模型加载与 QAT 准备 ---
@@ -125,6 +125,20 @@ int8_model = torch.ao.quantization.convert(model, inplace=False)
 deploy_path = os.path.join(model_dir, "resnet18_int8_deploy.pt")
 traced_model = torch.jit.trace(int8_model, torch.randn(1, 3, 224, 224))
 torch.jit.save(traced_model, deploy_path)
+# --- 6.5 真实 INT8 精度校验 ---
+log_message("Starting Real INT8 Model Evaluation on CPU...")
+int8_model.eval()
+test_correct_int8 = 0
+with torch.no_grad():
+    for inputs, labels in tqdm(test_loader, desc="Testing REAL INT8", leave=False):
+        # INT8 模型在 CPU 上运行效率最高
+        inputs, labels = inputs.to('cpu'), labels.to('cpu') 
+        outputs = int8_model(inputs)
+        _, pred = torch.max(outputs, 1)
+        test_correct_int8 += (pred == labels).sum().item()
+
+real_int8_acc = 100. * test_correct_int8 / len(test_loader.dataset)
+log_message(f"Real INT8 Accuracy after conversion: {real_int8_acc:.2f}%")
 
 # --- 7. 总结 ---
 def get_size_mb(path):
@@ -133,6 +147,8 @@ def get_size_mb(path):
 log_message("=" * 55)
 log_message("QAT Summary Report")
 log_message(f"Best Test Accuracy: {best_acc:.2f}%")
+log_message(f"REAL INT8 Accuracy (CPU): {real_int8_acc:.2f}%")  # 引用 6.5 得到的值
+log_message(f"Accuracy Drop: {best_acc - real_int8_acc:.2f}%") # 查看掉点情况
 log_message(f"INT8 Model Size: {get_size_mb(deploy_path):.2f} MB")
 log_message(f"Execution Time: {(time.time()-start_time)/60:.2f} mins")
 log_message("=" * 55)
