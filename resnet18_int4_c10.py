@@ -7,7 +7,7 @@ from tqdm import tqdm
 
 # --- 1. 全局配置 ---
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-batch_size, epochs, lr = 128, 15, 1e-4
+batch_size, epochs, lr = 128, 30, 1e-4
 model_dir = "/root/autodl-tmp/my_backup" if os.path.exists("/root/autodl-tmp") else "models"
 log_dir = "logs"
 os.makedirs(model_dir, exist_ok=True)
@@ -31,7 +31,7 @@ def log_message(msg):
     with open(log_filename, "a", encoding="utf-8") as f: 
         f.write(full_msg + "\n")
 
-# --- 数据处理 (统一增强策略与 num_workers) ---
+# --- 数据处理  ---
 transform = transforms.Compose([
     transforms.Resize(224), 
     transforms.RandomHorizontalFlip(), 
