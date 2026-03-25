@@ -77,7 +77,7 @@ start_time = time.time()
 log_message(f"{'Epoch':<10}{'TrainAcc':<15}{'TestAcc':<15}{'Loss':<15}")
 
 for epoch in range(epochs):
-    model.train()
+    model.train()exi
     if epoch > 3: # 第 5 轮起冻结
         model.apply(torch.ao.quantization.disable_observer)
         model.apply(torch.nn.intrinsic.qat.freeze_bn_stats)

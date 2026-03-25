@@ -6,18 +6,17 @@ from torchvision.models.quantization import mobilenet_v2
 import os, time, datetime
 from tqdm import tqdm
 
-# --- 1. 参数配置 ---
+# --- 1. 全局配置 ---
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 batch_size = 128
 epochs = 15
 lr = 1e-4
-
 model_dir = "/root/autodl-tmp/my_backup" if os.path.exists("/root/autodl-tmp") else "models"
 log_dir = "logs"
 os.makedirs(model_dir, exist_ok=True)
 os.makedirs(log_dir, exist_ok=True)
 
-# --- 2. 自定义 INT4 QConfig (手动约束位宽) ---
+# --- 2. INT4 QConfig ---
 def get_int4_qat_qconfig():
     return torch.ao.quantization.QConfig(
         activation=torch.ao.quantization.FakeQuantize.with_args(
@@ -33,9 +32,10 @@ def log_message(msg):
     t = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     full_msg = f"[{t}] {msg}"
     print(full_msg)
-    with open(log_filename, "a", encoding="utf-8") as f: f.write(full_msg + "\n")
+    with open(log_filename, "a", encoding="utf-8") as f: 
+        f.write(full_msg + "\n")
 
-# --- 3. 数据处理 ---
+# --- 3. 数据处理 (统一增强策略) ---
 transform = transforms.Compose([
     transforms.Resize(224),
     transforms.RandomHorizontalFlip(),
@@ -52,21 +52,20 @@ model.classifier[1] = nn.Linear(model.last_channel, 10)
 
 fp32_path = os.path.join(model_dir, "fp32_mobilenetv2_best.pth")
 if not os.path.exists(fp32_path): raise FileNotFoundError(f"Missing {fp32_path}")
-model.load_state_dict(torch.load(fp32_path, map_location='cpu'))
+model.load_state_dict(torch.load(fp32_path, map_location='cpu', weights_only=True))
 model.to(device)
 
 model.eval()
 model.fuse_model(is_qat=True)
+model.train() 
 model.qconfig = get_int4_qat_qconfig()
 torch.ao.quantization.prepare_qat(model, inplace=True)
-model.train()
 
 optimizer = optim.SGD(model.parameters(), lr=lr, momentum=0.9)
 criterion = nn.CrossEntropyLoss()
 
 # --- 5. 训练循环 ---
-best_acc = 0.0
-start_time = time.time()
+best_acc, start_time = 0.0, time.time()
 for epoch in range(epochs):
     model.train()
     if epoch > 3:
@@ -74,14 +73,16 @@ for epoch in range(epochs):
         model.apply(torch.nn.intrinsic.qat.freeze_bn_stats)
     
     correct, total = 0, 0
-    for inputs, labels in tqdm(train_loader, desc=f"Epoch {epoch+1}", leave=False):
+    for inputs, labels in tqdm(train_loader, desc=f"Epoch [{epoch+1:02d}/{epochs}]", leave=False):
         inputs, labels = inputs.to(device), labels.to(device)
         optimizer.zero_grad()
         outputs = model(inputs)
         loss = criterion(outputs, labels)
-        loss.backward(); optimizer.step()
+        loss.backward()
+        optimizer.step()
         _, pred = torch.max(outputs, 1)
-        total += labels.size(0); correct += (pred == labels).sum().item()
+        total += labels.size(0)
+        correct += (pred == labels).sum().item()
 
     model.eval()
     t_correct = 0
@@ -92,19 +93,19 @@ for epoch in range(epochs):
             _, pred = torch.max(outputs, 1)
             t_correct += (pred == labels).sum().item()
     
+    train_acc = 100. * correct / total
     val_acc = 100. * t_correct / len(test_loader.dataset)
-    log_message(f"Epoch {epoch+1} | TrainAcc: {100.*correct/total:.2f}% | TestAcc: {val_acc:.2f}%")
+    log_message(f"Epoch [{epoch+1:02d}/{epochs}] | Train Acc: {train_acc:5.2f}% | Val Acc: {val_acc:5.2f}%")
+    
     if val_acc > best_acc:
         best_acc = val_acc
         torch.save(model.state_dict(), os.path.join(model_dir, "mobilenetv2_int4_best.pth"))
 
 # --- 6. 实验报告 ---
 fp32_size = os.path.getsize(fp32_path) / (1024 * 1024)
-log_message("=" * 55)
-log_message(f"MobileNetV2 INT4 QAT Report")
-log_message(f"Best Simulated Accuracy: {best_acc:.2f}%")
-log_message(f"FP32 Model Size: {fp32_size:.2f} MB")
-log_message(f"Theory INT4 Size: {fp32_size / 8:.2f} MB")
-log_message(f"Compression Ratio: 8.00x")
-log_message(f"Execution Time: {(time.time()-start_time)/60:.2f} mins")
-log_message("=" * 55)
+log_message("=" * 60)
+log_message(f" MobileNetV2 INT4 QAT Final Report ")
+log_message(f" Best Val Accuracy : {best_acc:.2f}%")
+log_message(f" Theory INT4 Size  : {fp32_size / 8:.2f} MB (Compression: 8x)")
+log_message(f" Total Time Taken  : {(time.time()-start_time)/60:.2f} mins")
+log_message("=" * 60)
