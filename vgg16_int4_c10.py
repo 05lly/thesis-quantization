@@ -6,7 +6,7 @@ import os, time, datetime
 from tqdm import tqdm
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-batch_size, epochs, lr = 128, 15, 1e-4
+batch_size, epochs, lr = 128, 30, 1e-4
 model_dir = "/root/autodl-tmp/my_backup" if os.path.exists("/root/autodl-tmp") else "models"
 log_dir = "logs"
 os.makedirs(model_dir, exist_ok=True)
