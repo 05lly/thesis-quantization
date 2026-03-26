@@ -1,10 +1,15 @@
-CIFAR-10
-Model	Params	FP32 Acc	INT8 QAT Acc	FP32 Size	INT8 Size	Acc Drop	Compression	INT4 QAT (Fake)
-ResNet18	11.18M	96.53%	96.45%	42.73MB	10.82MB	0.08%	3.95×	91.78%
-MobileNetV2	2.24M	96.52%	95.64%	8.77MB	2.57MB	0.88%	3.41×	85.04%
-VGG16	134.30M	95.41%	95.33%	512.33MB	128.21MB	0.08%	4.00×	90.60%
-CIFAR-100
-Model	Params	INT8 QAT Acc	FP32 Size	INT8 Size	Acc Drop	Compression
-ResNet18	11.18M	82.86%	42.90MB	10.86MB	0.51%	3.95×
-MobileNetV2	2.24M	81.18%	9.21MB	2.68MB	1.43%	3.44×
-VGG16	134.30M	79.53%	513.74MB	128.56MB	-0.22%	4.00×
+## CIFAR-10 Results
+
+| Model       | Params   | FP32 Acc | INT8 QAT Acc | FP32 Size | INT8 Size | Acc Drop | Compression | INT4 QAT (Fake) |
+|------------|----------|----------|--------------|-----------|-----------|----------|-------------|-----------------|
+| ResNet18   | 11.18M   | 96.53%   | 96.45%       | 42.73MB   | 10.82MB   | 0.08%    | 3.95x       | 91.78%          |
+| MobileNetV2| 2.24M    | 96.52%   | 95.64%       | 8.77MB    | 2.57MB    | 0.88%    | 3.41x       | 85.04%          |
+| VGG16      | 134.30M  | 95.41%   | 95.33%       | 512.33MB  | 128.21MB  | 0.08%    | 4.00x       | 90.60%          |## 
+
+CIFAR-100 Results
+
+| Model       | Params   | INT8 QAT Acc | FP32 Size | INT8 Size | Acc Drop | Compression |
+|------------|----------|--------------|-----------|-----------|----------|-------------|
+| ResNet18   | 11.18M   | 82.86%       | 42.90MB   | 10.86MB   | 0.51%    | 3.95x       |
+| MobileNetV2| 2.24M    | 81.18%       | 9.21MB    | 2.68MB    | 1.43%    | 3.44x       |
+| VGG16      | 134.30M  | 79.53%       | 513.74MB  | 128.56MB  | -0.22%   | 4.00x       |
