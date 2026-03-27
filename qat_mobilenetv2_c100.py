@@ -10,8 +10,8 @@ from tqdm import tqdm
 
 # --- 1. 参数配置 ---
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-torch.backends.quantized.engine = 'qnnpack'  # 适配树莓派 5 
-batch_size = 128  # 保持与 ResNet18 一致
+torch.backends.quantized.engine = 'qnnpack' 
+batch_size = 128  
 epochs = 15
 lr = 5e-5         # 针对 CIFAR-100 调低学习率
 
@@ -55,7 +55,7 @@ test_loader = torch.utils.data.DataLoader(
 
 # --- 4. 模型准备与权重加载 ---
 model = mobilenet_v2(weights=None, quantize=False)
-model.classifier[1] = nn.Linear(model.last_channel, 100) # 类别修改为 100
+model.classifier[1] = nn.Linear(model.last_channel, 100) 
 
 fp32_path = os.path.join(model_dir, "fp32_mobilenetv2_c100_best.pth")
 if not os.path.exists(fp32_path):
@@ -145,7 +145,6 @@ int8_model.eval()
 test_correct_int8 = 0
 with torch.no_grad():
     for inputs, labels in tqdm(test_loader, desc="Testing REAL INT8", leave=False):
-        # INT8 模型在 CPU 上运行效率最高
         inputs, labels = inputs.to('cpu'), labels.to('cpu') 
         outputs = int8_model(inputs)
         _, pred = torch.max(outputs, 1)
@@ -164,8 +163,8 @@ int8_size = get_size_mb(deploy_path)
 log_message("=" * 55)
 log_message("QAT Summary Report (CIFAR-100)")
 log_message(f"Best Test Accuracy: {best_acc:.2f}%")
-log_message(f"REAL INT8 Accuracy (CPU): {real_int8_acc:.2f}%")  # 引用 6.5 得到的值
-log_message(f"Accuracy Drop: {best_acc - real_int8_acc:.2f}%") # 查看掉点情况
+log_message(f"REAL INT8 Accuracy (CPU): {real_int8_acc:.2f}%")  
+log_message(f"Accuracy Drop: {best_acc - real_int8_acc:.2f}%") 
 log_message(f"FP32 Model Size: {fp32_size:.2f} MB")
 log_message(f"INT8 Deploy Size: {int8_size:.2f} MB")
 log_message(f"Compression Ratio: {fp32_size/int8_size:.2f}x")

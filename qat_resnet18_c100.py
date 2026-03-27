@@ -50,7 +50,7 @@ test_loader = torch.utils.data.DataLoader(
 
 # --- 4. 模型加载与 QAT 准备 ---
 model = models.quantization.resnet18(weights=None, quantize=False)
-model.fc = nn.Linear(model.fc.in_features, 100) # 修改为 100 类
+model.fc = nn.Linear(model.fc.in_features, 100) 
 
 fp32_path = os.path.join(model_dir, "fp32_resnet18_c100_best.pth")
 if not os.path.exists(fp32_path):
@@ -147,8 +147,8 @@ def get_size_mb(path):
 log_message("=" * 55)
 log_message("QAT Summary Report")
 log_message(f"Best Test Accuracy: {best_acc:.2f}%")
-log_message(f"REAL INT8 Accuracy (CPU): {real_int8_acc:.2f}%")  # 引用 6.5 得到的值
-log_message(f"Accuracy Drop: {best_acc - real_int8_acc:.2f}%") # 查看掉点情况
+log_message(f"REAL INT8 Accuracy (CPU): {real_int8_acc:.2f}%")  
+log_message(f"Accuracy Drop: {best_acc - real_int8_acc:.2f}%") 
 log_message(f"INT8 Model Size: {get_size_mb(deploy_path):.2f} MB")
 log_message(f"Execution Time: {(time.time()-start_time)/60:.2f} mins")
 log_message("=" * 55)
