@@ -31,7 +31,7 @@ def log_message(msg):
 # 初始环境信息记录
 log_message(f"Env: {device} | Dataset: CIFAR-100 | Batch: {batch_size} | Mode: FP32-Baseline VGG16")
 
-# --- 3. 可量化 VGG16 结构定义 (为了后续 QAT ) ---
+# --- 3. 可量化 VGG16 结构定义  ---
 class QuantizableVGG16(nn.Module):
     def __init__(self, num_classes=100):
         super(QuantizableVGG16, self).__init__()
