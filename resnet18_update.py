@@ -8,7 +8,7 @@ from tqdm import tqdm
 # --- 1. 配置 ---
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 batch_size = 128
-epochs = 50   # ⭐ 提高
+epochs = 0
 lr = 1e-4
 
 model_dir = "/root/autodl-tmp/my_backup" if os.path.exists("/root/autodl-tmp") else "models"
@@ -160,3 +160,28 @@ log_message(f" Improved INT4 QAT Final Report ")
 log_message(f" Best Accuracy : {best_acc:.2f}%")
 log_message(f" Total Time    : {(time.time()-start_time)/60:.2f} mins")
 log_message("=" * 60)
+#体积
+
+def count_mixed_precision_size(model):
+    fp32_params = 0
+    int4_params = 0
+    
+    for name, module in model.named_modules():
+        # 统计 Conv2d 和 Linear 的参数
+        if isinstance(module, (torch.nn.Conv2d, torch.nn.Linear)):
+            num_params = sum(p.numel() for p in module.parameters())
+            # 如果该层没量化（qconfig为None），归为FP32
+            if getattr(module, 'qconfig', None) is None:
+                fp32_params += num_params
+            else:
+                int4_params += num_params
+                
+    # 计算理论大小 (FP32: 4 bytes, INT4: 0.5 bytes)
+    size_mb = (fp32_params * 4 + int4_params * 0.5) / (1024 * 1024)
+    return fp32_params, int4_params, size_mb
+
+# 在model 准备好后调用
+fp_p, int_p, total_size = count_mixed_precision_size(model)
+print(f"FP32 参数量: {fp_p/1e6:.2f} M")
+print(f"INT4 参数量: {int_p/1e6:.2f} M")
+print(f"混合精度理论体积: {total_size:.2f} MB")
