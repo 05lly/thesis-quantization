@@ -9,7 +9,7 @@ from tqdm import tqdm
 # --- 1. 配置 ---
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 batch_size = 128
-epochs = 50   # ⭐ 提升
+epochs = 50   
 lr = 1e-4
 
 model_dir = "/root/autodl-tmp/my_backup" if os.path.exists("/root/autodl-tmp") else "models"

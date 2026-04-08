@@ -16,20 +16,20 @@ log_dir = "logs"
 os.makedirs(model_dir, exist_ok=True)
 os.makedirs(log_dir, exist_ok=True)
 
-# ⭐⭐⭐ 核心改进：更强的 INT4 QConfig
+#核心改进：更强的 INT4 QConfig
 def get_int4_qat_qconfig():
     return torch.ao.quantization.QConfig(
         activation=torch.ao.quantization.FakeQuantize.with_args(
-            observer=torch.ao.quantization.HistogramObserver,  # ⭐ 改
+            observer=torch.ao.quantization.HistogramObserver, 
             quant_min=0, quant_max=15,
             dtype=torch.quint8,
             qscheme=torch.per_tensor_affine
         ),
         weight=torch.ao.quantization.FakeQuantize.with_args(
-            observer=torch.ao.quantization.PerChannelMinMaxObserver,  # ⭐ 核心
+            observer=torch.ao.quantization.PerChannelMinMaxObserver,  
             quant_min=-8, quant_max=7,
             dtype=torch.qint8,
-            qscheme=torch.per_channel_symmetric   # ⭐ 核心
+            qscheme=torch.per_channel_symmetric   
         )
     )
 
@@ -86,11 +86,11 @@ model.train()
 
 model.qconfig = get_int4_qat_qconfig()
 
-# ⭐⭐⭐ 更合理的混合精度策略
+#  更合理的混合精度策略
 model.conv1.qconfig = None
 model.fc.qconfig = None
 
-# ⭐ 关键：保护 layer1（低层特征）
+# 保护 layer1（低层特征）
 for name, module in model.named_modules():
     if "layer1" in name:
         module.qconfig = None
@@ -110,7 +110,7 @@ log_message(f"{'Epoch':<10}{'TrainAcc':<15}{'TestAcc':<15}{'LR':<15}")
 for epoch in range(epochs):
     model.train()
 
-    # ⭐ 延迟冻结（关键）
+    #  延迟冻结（关键）
     if epoch > 20:
         model.apply(torch.ao.quantization.disable_observer)
         model.apply(torch.nn.intrinsic.qat.freeze_bn_stats)
