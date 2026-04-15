@@ -23,7 +23,7 @@ log_dir = "logs"
 os.makedirs(model_dir, exist_ok=True)
 os.makedirs(log_dir, exist_ok=True)
 
-# --- 2. 日志函数  ---
+# --- 2. 日志函数 ---
 log_filename = os.path.join(log_dir, f"qat_resnet18_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
 
 def log_message(msg):
@@ -35,7 +35,7 @@ def log_message(msg):
 
 log_message(f"Environment: {device} | Batch Size: {batch_size} | Epochs: {epochs} | Engine: qnnpack")
 
-# --- 3. 数据处理 (统一 224 分辨率与归一化参数) ---
+# --- 3. 数据处理 ---
 transform_qat = transforms.Compose([
     transforms.Resize(224),
     transforms.RandomHorizontalFlip(),
@@ -52,11 +52,9 @@ test_loader = torch.utils.data.DataLoader(
     batch_size=batch_size, shuffle=False, num_workers=4, pin_memory=True)
 
 # --- 4. 模型加载与 QAT 准备 ---
-# 必须使用 quantization 专用模型定义以确保结构兼容
 model = models.quantization.resnet18(weights=None, quantize=False)
 model.fc = nn.Linear(model.fc.in_features, 10)
 
-# 自动读取之前的 FP32 权重
 fp32_path = os.path.join(model_dir, "fp32_resnet18_best.pth")
 if not os.path.exists(fp32_path):
     log_message(f"Error: {fp32_path} not found.")
@@ -66,7 +64,6 @@ model.load_state_dict(torch.load(fp32_path, map_location='cpu', weights_only=Tru
 model.to(device)
 log_message(f"FP32 Checkpoint Loaded: {fp32_path}")
 
-# 融合算子
 model.eval()
 model.fuse_model(is_qat=True)
 model.train()
@@ -83,7 +80,6 @@ log_message(f"{'Epoch':<10}{'TrainAcc':<15}{'TestAcc':<15}{'Loss':<15}")
 
 for epoch in range(epochs):
     model.train()
-    #第 5 轮 (epoch index 4) 冻结
     if epoch > 3:
         model.apply(torch.ao.quantization.disable_observer)
         model.apply(torch.nn.intrinsic.qat.freeze_bn_stats)
@@ -102,7 +98,6 @@ for epoch in range(epochs):
         total += labels.size(0)
         correct += (pred == labels).sum().item()
 
-    # 验证模拟量化精度
     model.eval()
     test_correct = 0
     with torch.no_grad():
@@ -120,26 +115,26 @@ for epoch in range(epochs):
     
     if val_acc > best_acc:
         best_acc = val_acc
-        torch.save(model.state_dict(), os.path.join(model_dir, "resnet18_qat_best.pth"))
+        #resnet18_c10_qat_best.pth
+        best_qat_path = os.path.join(model_dir, "resnet18_c10_qat_best.pth")
+        torch.save(model.state_dict(), best_qat_path)
         log_message(f"New Best Accuracy: {best_acc:.2f}%")
 
 # --- 6. 最终转换与部署导出 ---
-log_message("Converting to INT8 Trace Format...")
-model.load_state_dict(torch.load(os.path.join(model_dir, "resnet18_qat_best.pth"), map_location='cpu'))
+log_message("Converting QAT model to deployed INT8 format...")
+model.load_state_dict(torch.load(best_qat_path, map_location='cpu'))
 model.to('cpu').eval()
 int8_model = torch.ao.quantization.convert(model, inplace=False)
-
-# 导出部署包 
-example_input = torch.randn(1, 3, 224, 224)
-traced_model = torch.jit.trace(int8_model, example_input)
 
 weights_path = os.path.join(model_dir, "resnet18_c10_int8_final.pth")
 deploy_path = os.path.join(model_dir, "resnet18_c10_int8_deploy.pt")
 
 torch.save(int8_model.state_dict(), weights_path)
+example_input = torch.randn(1, 3, 224, 224)
+traced_model = torch.jit.trace(int8_model, example_input)
 torch.jit.save(traced_model, deploy_path)
 
-# --- 7. 报表 ---
+# --- 7. 总结报表  ---
 def get_size_mb(path):
     return os.path.getsize(path) / (1024 * 1024) if os.path.exists(path) else 0
 
@@ -147,10 +142,12 @@ fp32_size = get_size_mb(fp32_path)
 int8_size = get_size_mb(deploy_path)
 
 log_message("=" * 55)
-log_message("QAT Summary Report")
+log_message("QAT Process Finished.")
 log_message(f"Best Test Accuracy: {best_acc:.2f}%")
+log_message(f"Deployment Model Saved: {deploy_path}")
 log_message(f"FP32 Model Size: {fp32_size:.2f} MB")
-log_message(f"INT8 Model Size: {int8_size:.2f} MB")
+log_message(f"INT8 Deploy Size: {int8_size:.2f} MB")
 log_message(f"Compression Ratio: {fp32_size/int8_size:.2f}x")
-log_message(f"Execution Time: {(time.time()-start_time)/60:.2f} mins")
+log_message(f"Total Time: {(time.time()-start_time)/60:.2f} mins")
 log_message("=" * 55)
+log_message("Experiment Complete. Ready for Raspberry Pi 5.")
