@@ -133,8 +133,8 @@ int8_model = torch.ao.quantization.convert(model, inplace=False)
 example_input = torch.randn(1, 3, 224, 224)
 traced_model = torch.jit.trace(int8_model, example_input)
 
-weights_path = os.path.join(model_dir, "resnet18_int8_final.pth")
-deploy_path = os.path.join(model_dir, "resnet18_int8_deploy.pt")
+weights_path = os.path.join(model_dir, "resnet18_c10_int8_final.pth")
+deploy_path = os.path.join(model_dir, "resnet18_c10_int8_deploy.pt")
 
 torch.save(int8_model.state_dict(), weights_path)
 torch.jit.save(traced_model, deploy_path)

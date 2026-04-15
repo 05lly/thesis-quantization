@@ -10,7 +10,7 @@ from tqdm import tqdm
 # 1. 参数与环境配置 (严格锁定 QNNPACK)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-# 全局强制使用 qnnpack (ARM设备专属)
+# 全局强制使用 qnnpack (ARM设备专属) cifar-10
 torch.backends.quantized.engine = 'qnnpack'
 
 batch_size = 128  

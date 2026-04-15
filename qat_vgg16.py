@@ -143,22 +143,22 @@ for epoch in range(epochs):
     
     if val_acc > best_acc:
         best_acc = val_acc
-        torch.save(model.state_dict(), os.path.join(model_dir, "vgg16_qat_best.pth"))
+        torch.save(model.state_dict(), os.path.join(model_dir, "vgg16_c10_qat_best.pth"))
         log_message(f"New Best QAT Accuracy: {best_acc:.2f}%")
 
 # --- 7. 导出最终成果 ---
 log_message("Converting to INT8 and Saving Files...")
-model.load_state_dict(torch.load(os.path.join(model_dir, "vgg16_qat_best.pth"), map_location='cpu'))
+model.load_state_dict(torch.load(os.path.join(model_dir, "vgg16_c10_qat_best.pth"), map_location='cpu'))
 model.to('cpu').eval()
 int8_model = torch.ao.quantization.convert(model, inplace=False)
 
 # 1. 保存 INT8 权重 (.pth)
-torch.save(int8_model.state_dict(), os.path.join(model_dir, "vgg16_int8_final.pth"))
+torch.save(int8_model.state_dict(), os.path.join(model_dir, "vgg16_c10_int8_final.pth"))
 
 # 2. 保存部署模型 (.pt)
 example_input = torch.randn(1, 3, 224, 224)
 traced_model = torch.jit.trace(int8_model, example_input)
-deploy_path = os.path.join(model_dir, "vgg16_int8_deploy.pt")
+deploy_path = os.path.join(model_dir, "vgg16_c10_int8_deploy.pt")
 torch.jit.save(traced_model, deploy_path)
 
 # --- 8. 总结 ---

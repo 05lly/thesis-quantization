@@ -58,7 +58,7 @@ model.classifier[1] = nn.Linear(model.last_channel, 10)
 
 fp32_path = os.path.join(model_dir, "fp32_mobilenetv2_best.pth")
 if not os.path.exists(fp32_path):
-    log_message(f"❌ Error: {fp32_path} not found! Please run FP32 training first.")
+    log_message(f" Error: {fp32_path} not found! Please run FP32 training first.")
     exit()
 
 # 加载 FP32 权重
@@ -120,12 +120,12 @@ for epoch in range(epochs):
     
     if val_acc > best_acc:
         best_acc = val_acc
-        torch.save(model.state_dict(), os.path.join(model_dir, "mobilenetv2_qat_best.pth"))
+        torch.save(model.state_dict(), os.path.join(model_dir, "mobilenetv2_c10_qat_best.pth"))
         log_message(f"--- Saved best model: {best_acc:.2f}% ---")
 
 # --- 6. 最终转换与模型保存 ---
 log_message("Converting QAT model to deployed INT8 format...")
-model.load_state_dict(torch.load(os.path.join(model_dir, "mobilenetv2_qat_best.pth"), map_location='cpu'))
+model.load_state_dict(torch.load(os.path.join(model_dir, "mobilenetv2_c10_qat_best.pth"), map_location='cpu'))
 model.to('cpu').eval()
 
 # 1. 物理转换 (FP32 -> INT8)
@@ -136,8 +136,8 @@ example_input = torch.randn(1, 3, 224, 224)
 traced_model = torch.jit.trace(int8_model, example_input)
 
 # 3. 保存文件
-weights_path = os.path.join(model_dir, "mobilenetv2_int8_final.pth") # 权重
-deploy_path = os.path.join(model_dir, "mobilenetv2_int8_deploy.pt")   # 部署包
+weights_path = os.path.join(model_dir, "mobilenetv2_c10_int8_final.pth") # 权重
+deploy_path = os.path.join(model_dir, "mobilenetv2_c10_int8_deploy.pt")   # 部署包
 
 torch.save(int8_model.state_dict(), weights_path)
 torch.jit.save(traced_model, deploy_path)
