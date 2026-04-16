@@ -70,7 +70,7 @@ example_input = torch.randn(1, 3, 224, 224)
 traced_model = torch.jit.trace(int8_model, example_input)
 torch.jit.save(traced_model, deploy_path)
 
-# --- 4. 报表输出 (完全对齐) ---
+# --- 4. 报表输出 ---
 def get_size_mb(path):
     return os.path.getsize(path) / (1024 * 1024) if os.path.exists(path) else 0
 
