@@ -1,0 +1,53 @@
+==> 正在加载 ImageNet 预训练的 MobileNetV2...
+Epoch [1/30] Loss: 0.4365 | Test Acc: 90.07%
+  --> 精度提升！已保存至: /root/autodl-tmp/my_backup/fp32_mobilenetv2_best.pth
+Epoch [2/30] Loss: 0.2209 | Test Acc: 92.95%
+  --> 精度提升！已保存至: /root/autodl-tmp/my_backup/fp32_mobilenetv2_best.pth
+Epoch [3/30] Loss: 0.1653 | Test Acc: 93.56%
+  --> 精度提升！已保存至: /root/autodl-tmp/my_backup/fp32_mobilenetv2_best.pth
+Epoch [4/30] Loss: 0.1350 | Test Acc: 93.54%
+Epoch [5/30] Loss: 0.1123 | Test Acc: 94.00%
+  --> 精度提升！已保存至: /root/autodl-tmp/my_backup/fp32_mobilenetv2_best.pth
+Epoch [6/30] Loss: 0.0909 | Test Acc: 94.24%
+  --> 精度提升！已保存至: /root/autodl-tmp/my_backup/fp32_mobilenetv2_best.pth
+Epoch [7/30] Loss: 0.0771 | Test Acc: 94.20%
+Epoch [8/30] Loss: 0.0610 | Test Acc: 94.36%
+  --> 精度提升！已保存至: /root/autodl-tmp/my_backup/fp32_mobilenetv2_best.pth
+Epoch [9/30] Loss: 0.0510 | Test Acc: 94.84%
+  --> 精度提升！已保存至: /root/autodl-tmp/my_backup/fp32_mobilenetv2_best.pth
+Epoch [10/30] Loss: 0.0448 | Test Acc: 95.03%
+  --> 精度提升！已保存至: /root/autodl-tmp/my_backup/fp32_mobilenetv2_best.pth
+Epoch [11/30] Loss: 0.0367 | Test Acc: 94.82%
+Epoch [12/30] Loss: 0.0286 | Test Acc: 95.22%
+  --> 精度提升！已保存至: /root/autodl-tmp/my_backup/fp32_mobilenetv2_best.pth
+Epoch [13/30] Loss: 0.0198 | Test Acc: 95.59%
+  --> 精度提升！已保存至: /root/autodl-tmp/my_backup/fp32_mobilenetv2_best.pth
+Epoch [14/30] Loss: 0.0179 | Test Acc: 95.55%
+Epoch [15/30] Loss: 0.0127 | Test Acc: 95.71%
+  --> 精度提升！已保存至: /root/autodl-tmp/my_backup/fp32_mobilenetv2_best.pth
+Epoch [16/30] Loss: 0.0113 | Test Acc: 95.67%
+Epoch [17/30] Loss: 0.0071 | Test Acc: 95.86%
+  --> 精度提升！已保存至: /root/autodl-tmp/my_backup/fp32_mobilenetv2_best.pth
+Epoch [18/30] Loss: 0.0054 | Test Acc: 96.07%
+  --> 精度提升！已保存至: /root/autodl-tmp/my_backup/fp32_mobilenetv2_best.pth
+Epoch [19/30] Loss: 0.0049 | Test Acc: 96.05%
+Epoch [20/30] Loss: 0.0043 | Test Acc: 96.28%
+  --> 精度提升！已保存至: /root/autodl-tmp/my_backup/fp32_mobilenetv2_best.pth
+Epoch [21/30] Loss: 0.0031 | Test Acc: 96.20%
+Epoch [22/30] Loss: 0.0027 | Test Acc: 96.41%
+  --> 精度提升！已保存至: /root/autodl-tmp/my_backup/fp32_mobilenetv2_best.pth
+Epoch [23/30] Loss: 0.0028 | Test Acc: 96.30%
+Epoch [24/30] Loss: 0.0023 | Test Acc: 96.33%
+Epoch [25/30] Loss: 0.0019 | Test Acc: 96.33%
+Epoch [26/30] Loss: 0.0017 | Test Acc: 96.33%
+Epoch [27/30] Loss: 0.0016 | Test Acc: 96.33%
+Epoch [28/30] Loss: 0.0019 | Test Acc: 96.35%
+Epoch [29/30] Loss: 0.0017 | Test Acc: 96.24%
+Epoch [30/30] Loss: 0.0016 | Test Acc: 96.40%
+
+=======================================================
+FP32 Baseline Training Finished
+Best Accuracy: 96.41%
+Total Training Time: 25.65 mins
+=======================================================
+日志已保存至: FP32_MobileNetV2_Train_C10_20260416_1354.log
