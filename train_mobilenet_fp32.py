@@ -3,6 +3,21 @@ import torch.nn as nn
 import torch.optim as optim
 from torchvision import datasets, transforms, models
 import os
+import time
+import logging
+from datetime import datetime
+
+# --- 0. 日志配置 ---
+log_time = datetime.now().strftime('%Y%m%d_%H%M')
+log_filename = f"FP32_MobileNetV2_Train_C10_{log_time}.log"
+
+logging.basicConfig(level=logging.INFO, format='%(message)s')
+logger = logging.getLogger()
+file_handler = logging.FileHandler(log_filename)
+logger.addHandler(file_handler)
+
+def log_message(msg):
+    logger.info(msg)
 
 # --- 1. 路径自适应配置 ---
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -38,7 +53,7 @@ testset = datasets.CIFAR10(root='./data', train=False, download=True, transform=
 testloader = torch.utils.data.DataLoader(testset, batch_size=batch_size, shuffle=False, num_workers=4, pin_memory=True)
 
 # --- 3. 模型加载 (迁移学习) ---
-print("==> 正在加载 ImageNet 预训练的 MobileNetV2...")
+log_message("==> 正在加载 ImageNet 预训练的 MobileNetV2...")
 model = models.mobilenet_v2(weights=models.MobileNet_V2_Weights.IMAGENET1K_V1)
 model.classifier[1] = nn.Linear(model.last_channel, 10)
 model = model.to(device)
@@ -50,6 +65,8 @@ scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
 
 # --- 5. 训练循环 ---
 best_acc = 0.0
+start_time = time.time()  # 记录开始时间
+
 for epoch in range(epochs):
     model.train()
     running_loss = 0.0
@@ -75,12 +92,18 @@ for epoch in range(epochs):
             correct += (predicted == labels).sum().item()
             
     acc = 100. * correct / total
-    print(f"Epoch [{epoch+1}/{epochs}] Loss: {running_loss/len(trainloader):.4f} | Test Acc: {acc:.2f}%")
+    log_message(f"Epoch [{epoch+1}/{epochs}] Loss: {running_loss/len(trainloader):.4f} | Test Acc: {acc:.2f}%")
     
     if acc > best_acc:
         best_acc = acc
         save_path = os.path.join(model_dir, "fp32_mobilenetv2_best.pth")
         torch.save(model.state_dict(), save_path)
-        print(f"  --> 精度提升！已保存至: {save_path}")
+        log_message(f"  --> 精度提升！已保存至: {save_path}")
 
-print(f"FP32 训练完成，最高精度: {best_acc:.2f}%")
+# --- 6. 实验总结 ---
+log_message("\n" + "=" * 55)
+log_message("FP32 Baseline Training Finished")
+log_message(f"Best Accuracy: {best_acc:.2f}%")
+log_message(f"Total Training Time: {(time.time() - start_time) / 60:.2f} mins")
+log_message("=" * 55)
+log_message(f"日志已保存至: {log_filename}")
