@@ -17,7 +17,7 @@
 
 ## 树莓派 5 部署性能评估 (INT8 量化)
 
-本实验记录了 ResNet18、MobileNetV2 以及 VGG16 在树莓派 5 (Raspberry Pi 5) 上的实际推理表现。
+记录了 ResNet18、MobileNetV2 以及 VGG16 在树莓派 5 上的实际推理表现。
 ### CIFAR-10 数据集测试结果 (N=10,000)
 
 | 测试模型 (INT8) | 准确率 (%) | 吞吐量 (FPS) | 平均延迟 (ms) | 模型体积 (MB) |
