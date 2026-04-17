@@ -103,7 +103,7 @@ for epoch in range(epochs):
         best_acc = val_acc
         torch.save(model.state_dict(), os.path.join(model_dir, "fp32_resnet18_c100_best.pth"))
 
-# --- 6. 总结与延迟测试 ---
+# --- 6. 总结 ---
 model.eval()
 dummy = torch.randn(1, 3, 224, 224).to(device)
 with torch.no_grad():

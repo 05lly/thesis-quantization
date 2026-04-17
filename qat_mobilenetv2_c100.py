@@ -42,7 +42,7 @@ transform_qat = transforms.Compose([
     transforms.Resize(224),
     transforms.RandomHorizontalFlip(),
     transforms.ToTensor(),
-    transforms.Normalize((0.5071, 0.4867, 0.4408), (0.2675, 0.2565, 0.2761)),
+    transforms.Normalize((0.5071, 0.4865, 0.4409), (0.2673, 0.2564, 0.2761)),
 ])
 
 train_loader = torch.utils.data.DataLoader(
@@ -122,16 +122,21 @@ for epoch in range(epochs):
     
     if val_acc > best_acc:
         best_acc = val_acc
-        torch.save(model.state_dict(), os.path.join(model_dir, "mobilenetv2_qat_best.pth"))
+        #torch.save(model.state_dict(), os.path.join(model_dir, "mobilenetv2_qat_best.pth"))
+        qat_path = os.path.join(model_dir, "mobilenetv2_c100_qat_best.pth")
+        torch.save(model.state_dict(), qat_path)
         log_message(f"--- Saved best model: {best_acc:.2f}% ---")
 
 # --- 6. 最终转换与模型保存 ---
 log_message("Converting QAT model to deployed INT8 format...")
-model.load_state_dict(torch.load(os.path.join(model_dir, "mobilenetv2_qat_best.pth"), map_location='cpu'))
+#model.load_state_dict(torch.load(os.path.join(model_dir, "mobilenetv2_qat_best.pth"), map_location='cpu'))
+model.load_state_dict(torch.load(qat_path, map_location='cpu'))
 model.to('cpu').eval()
 
 # 物理转换 (FP32 -> INT8)
 int8_model = torch.ao.quantization.convert(model, inplace=False)
+int8_weight_path = os.path.join(model_dir, "mobilenetv2_c100_int8_final.pth")
+torch.save(int8_model.state_dict(), int8_weight_path)
 
 # 导出 TorchScript
 example_input = torch.randn(1, 3, 224, 224)

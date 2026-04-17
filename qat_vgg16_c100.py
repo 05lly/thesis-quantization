@@ -147,6 +147,8 @@ log_message("Final INT8 Converting...")
 model.load_state_dict(torch.load(best_qat_path, map_location='cpu'))
 model.to('cpu').eval()
 int8_model = torch.ao.quantization.convert(model, inplace=False)
+int8_weight_path = os.path.join(model_dir, "vgg16_c100_int8_final.pth")
+torch.save(int8_model.state_dict(), int8_weight_path)
 
 deploy_path = os.path.join(model_dir, "vgg16_c100_int8_deploy.pt")
 traced_model = torch.jit.trace(int8_model, torch.randn(1, 3, 224, 224))

@@ -37,7 +37,7 @@ transform_qat = transforms.Compose([
     transforms.Resize(224),
     transforms.RandomHorizontalFlip(),
     transforms.ToTensor(),
-    transforms.Normalize((0.5071, 0.4867, 0.4408), (0.2675, 0.2565, 0.2761)),
+    transforms.Normalize((0.5071, 0.4865, 0.4409), (0.2673, 0.2564, 0.2761)),
 ])
 
 train_loader = torch.utils.data.DataLoader(
@@ -77,7 +77,7 @@ start_time = time.time()
 log_message(f"{'Epoch':<10}{'TrainAcc':<15}{'TestAcc':<15}{'Loss':<15}")
 
 for epoch in range(epochs):
-    model.train()exi
+    model.train()
     if epoch > 3: # 第 5 轮起冻结
         model.apply(torch.ao.quantization.disable_observer)
         model.apply(torch.nn.intrinsic.qat.freeze_bn_stats)
@@ -113,16 +113,19 @@ for epoch in range(epochs):
     
     if val_acc > best_acc:
         best_acc = val_acc
-        torch.save(model.state_dict(), os.path.join(model_dir, "resnet18_qat_best.pth"))
+        qat_path = os.path.join(model_dir, "resnet18_c100_qat_best.pth")
+        torch.save(model.state_dict(), qat_path)
         log_message(f"New Best Accuracy: {best_acc:.2f}%")
 
 # --- 6. 转换与导出 ---
 log_message("Converting to INT8 Trace Format...")
-model.load_state_dict(torch.load(os.path.join(model_dir, "resnet18_qat_best.pth"), map_location='cpu'))
+#model.load_state_dict(torch.load(os.path.join(model_dir, "resnet18_qat_best.pth"), map_location='cpu'))
+model.load_state_dict(torch.load(qat_path, map_location='cpu'))
 model.to('cpu').eval()
 int8_model = torch.ao.quantization.convert(model, inplace=False)
-
-deploy_path = os.path.join(model_dir, "resnet18_int8_deploy.pt")
+int8_weight_path = os.path.join(model_dir, "resnet18_c100_int8_final.pth")
+torch.save(int8_model.state_dict(), int8_weight_path)
+deploy_path = os.path.join(model_dir, "resnet18_c100_int8_deploy.pt")
 traced_model = torch.jit.trace(int8_model, torch.randn(1, 3, 224, 224))
 torch.jit.save(traced_model, deploy_path)
 # --- 6.5 真实 INT8 精度校验 ---
