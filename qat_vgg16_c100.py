@@ -12,15 +12,15 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 torch.backends.quantized.engine = 'qnnpack' 
 batch_size = 128
 epochs = 15
-lr = 5e-5        # CIFAR-100 
+lr = 5e-5
 
 model_dir = "/root/autodl-tmp/my_backup" if os.path.exists("/root/autodl-tmp") else "models"
 log_dir = "logs"
 os.makedirs(model_dir, exist_ok=True)
 os.makedirs(log_dir, exist_ok=True)
 
-# --- 2. 日志函数 ---
-log_filename = os.path.join(log_dir, f"qat_vgg16_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
+# --- 2. 日志系统 ---
+log_filename = os.path.join(log_dir, f"qat_vgg16_c100_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
 def log_message(msg):
     t = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     full_msg = f"[{t}] {msg}"
@@ -28,17 +28,16 @@ def log_message(msg):
     with open(log_filename, "a", encoding="utf-8") as f:
         f.write(full_msg + "\n")
 
-# --- 3. 模型 ---
+# --- 3. 模型定义 ---
 class QuantizableVGG16(nn.Module):
     def __init__(self, num_classes=100):
         super(QuantizableVGG16, self).__init__()
-        # 加载基础 VGG16 模型
         vgg = models.vgg16(weights=None) 
         self.features = vgg.features
         self.avgpool = vgg.avgpool
         self.classifier = vgg.classifier
         self.classifier[6] = nn.Linear(self.classifier[6].in_features, num_classes)
-        # 插入量化/反量化节点
+        
         self.quant = torch.ao.quantization.QuantStub()
         self.dequant = torch.ao.quantization.DeQuantStub()
 
@@ -52,16 +51,17 @@ class QuantizableVGG16(nn.Module):
         return x
 
     def fuse_model(self):
-        for m in self.modules():
-            if type(m) == nn.Sequential:
-                for i in range(len(m) - 1):
-                    if type(m[i]) == nn.Conv2d and type(m[i+1]) == nn.ReLU:
-                        torch.ao.quantization.fuse_modules(m, [str(i), str(i+1)], inplace=True)
-                    elif type(m[i]) == nn.Linear and type(m[i+1]) == nn.ReLU:
-                        torch.ao.quantization.fuse_modules(m, [str(i), str(i+1)], inplace=True)
+        # 针对 Features 部分自动融合
+        for i in range(len(self.features) - 1):
+            if isinstance(self.features[i], nn.Conv2d) and isinstance(self.features[i+1], nn.ReLU):
+                torch.ao.quantization.fuse_modules(self.features, [str(i), str(i+1)], inplace=True)
+        # 针对 Classifier 部分手动指定融合 (0-1, 3-4)
+        torch.ao.quantization.fuse_modules(self.classifier, ['0', '1'], inplace=True)
+        torch.ao.quantization.fuse_modules(self.classifier, ['3', '4'], inplace=True)
+        log_message("VGG16 Fusion: Features (auto) & Classifier (manual) complete.")
 
 # --- 4. 数据处理 (CIFAR-100) ---
-data_dir = '/root/autodl-tmp/data' 
+data_dir = './data' 
 transform_qat = transforms.Compose([
     transforms.Resize(224),
     transforms.RandomHorizontalFlip(),
@@ -77,21 +77,18 @@ test_loader = torch.utils.data.DataLoader(
     datasets.CIFAR100(data_dir, train=False, download=True, transform=transform_qat),
     batch_size=batch_size, shuffle=False, num_workers=4, pin_memory=True)
 
-# --- 5. 模型加载与 QAT 准备 ---
-log_message(f"Initializing Quantizable VGG16 for CIFAR-100 (Batch: {batch_size}, LR: {lr})...")
+# --- 5. 模型准备 ---
+log_message(f"Initializing QAT for CIFAR-100...")
 model = QuantizableVGG16(num_classes=100)
-
 fp32_path = os.path.join(model_dir, "fp32_vgg16_c100_best.pth")
+
 if not os.path.exists(fp32_path):
-    log_message(f"Error: {fp32_path} not found. Please check your path.")
+    log_message(f"Error: {fp32_path} not found.")
     exit()
 
-# 加载 FP32 权重
 model.load_state_dict(torch.load(fp32_path, map_location='cpu', weights_only=True))
 model.to(device)
-log_message(f"FP32 Checkpoint Loaded: {fp32_path}")
 
-# 融合与 QAT 准备
 model.eval()
 model.fuse_model() 
 model.train() 
@@ -108,14 +105,11 @@ log_message(f"{'Epoch':<10}{'TrainAcc':<15}{'TestAcc':<15}{'Loss':<15}")
 
 for epoch in range(epochs):
     model.train()
-    # 冻结量化观察器（第 5 轮开始）
     if epoch > 3:
         model.apply(torch.ao.quantization.disable_observer)
     
-    #删除了冗余的 freeze_bn_stats，因为标准 VGG16 没有 BN 层
-    
     running_loss, correct, total = 0.0, 0, 0
-    for inputs, labels in tqdm(train_loader, desc=f"VGG16 QAT Epoch {epoch+1}", leave=False):
+    for inputs, labels in tqdm(train_loader, desc=f"C100 QAT Epoch {epoch+1}", leave=False):
         inputs, labels = inputs.to(device), labels.to(device)
         optimizer.zero_grad()
         outputs = model(inputs)
@@ -128,7 +122,6 @@ for epoch in range(epochs):
         total += labels.size(0)
         correct += (pred == labels).sum().item()
 
-    # 验证模拟量化精度
     model.eval()
     test_correct = 0
     with torch.no_grad():
@@ -146,51 +139,45 @@ for epoch in range(epochs):
     
     if val_acc > best_acc:
         best_acc = val_acc
-        torch.save(model.state_dict(), os.path.join(model_dir, "vgg16_qat_best.pth"))
-        log_message(f"--- Saved new best QAT Accuracy: {best_acc:.2f}% ---")
+        best_qat_path = os.path.join(model_dir, "vgg16_c100_qat_best.pth")
+        torch.save(model.state_dict(), best_qat_path)
 
-# --- 7. 导出最终模型 ---
-log_message("Converting to INT8 and Exporting for Deployment...")
-model.load_state_dict(torch.load(os.path.join(model_dir, "vgg16_qat_best.pth"), map_location='cpu', weights_only=True))
+# --- 7.INT8 转换与真实验证--
+log_message("Final INT8 Converting...")
+model.load_state_dict(torch.load(best_qat_path, map_location='cpu'))
 model.to('cpu').eval()
 int8_model = torch.ao.quantization.convert(model, inplace=False)
 
-# 保存权重文件
-torch.save(int8_model.state_dict(), os.path.join(model_dir, "vgg16_int8_final.pth"))
-
-# 保存部署用的脚本文件
-example_input = torch.randn(1, 3, 224, 224)
-traced_model = torch.jit.trace(int8_model, example_input)
-deploy_path = os.path.join(model_dir, "vgg16_int8_deploy.pt")
+deploy_path = os.path.join(model_dir, "vgg16_c100_int8_deploy.pt")
+traced_model = torch.jit.trace(int8_model, torch.randn(1, 3, 224, 224))
 torch.jit.save(traced_model, deploy_path)
 
-# 真实的 INT8 模型验证
-log_message("Evaluating REAL INT8 model accuracy on CPU (this may take a moment)...")
+# CPU上的真实INT8验证
 int8_model.eval()
 test_correct_int8 = 0
 with torch.no_grad():
-    for inputs, labels in tqdm(test_loader, desc="Testing INT8 Model", leave=False):
-        # INT8 推理必须在 CPU 上运行
+    for inputs, labels in tqdm(test_loader, desc="Testing Real INT8"):
         inputs, labels = inputs.to('cpu'), labels.to('cpu') 
         outputs = int8_model(inputs)
         _, pred = torch.max(outputs, 1)
         test_correct_int8 += (pred == labels).sum().item()
-
 real_int8_acc = 100. * test_correct_int8 / len(test_loader.dataset)
 
-# --- 8. 总结 ---
+##--- 8. 总结 ---
 def get_size_mb(path):
     return os.path.getsize(path) / (1024 * 1024) if os.path.exists(path) else 0
 
 fp32_size = get_size_mb(fp32_path)
 int8_size = get_size_mb(deploy_path)
+compression = fp32_size / int8_size if int8_size > 0 else 0
 
 log_message("=" * 55)
 log_message(f"VGG16 QAT Report (CIFAR-100)")
-log_message(f"Best Simulated Accuracy: {best_acc:.2f}%")
-log_message(f"Real INT8 Deploy Accuracy: {real_int8_acc:.2f}%")
+log_message(f"QAT Simulated Accuracy: {best_acc:.2f}%")
+log_message(f"Real INT8 Deploy Accuracy (CPU): {real_int8_acc:.2f}%")
+log_message(f"Accuracy Drop after Convert: {best_acc - real_int8_acc:.2f}%")
 log_message(f"FP32 Model Size: {fp32_size:.2f} MB")
 log_message(f"INT8 Deploy Size: {int8_size:.2f} MB")
-log_message(f"Compression Ratio: {fp32_size/int8_size:.2f}x")
+log_message(f"Compression Ratio: {compression:.2f}x")
 log_message(f"Execution Time: {(time.time()-start_time)/60:.2f} mins")
 log_message("=" * 55)
