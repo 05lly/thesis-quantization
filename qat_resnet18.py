@@ -122,32 +122,48 @@ for epoch in range(epochs):
 
 # --- 6. 最终转换与部署导出 ---
 log_message("Converting QAT model to deployed INT8 format...")
-model.load_state_dict(torch.load(best_qat_path, map_location='cpu'))
+model.load_state_dict(torch.load(best_qat_path, map_location='cpu', weights_only=True))
 model.to('cpu').eval()
 int8_model = torch.ao.quantization.convert(model, inplace=False)
 
+#验证 Real INT8 Accuracy
+log_message("Validating Real INT8 Accuracy (CPU)...")
+test_correct_int8 = 0
+with torch.no_grad():
+    for inputs, labels in tqdm(test_loader, desc="Testing Real INT8"):
+        inputs, labels = inputs.to('cpu'), labels.to('cpu')
+        outputs = int8_model(inputs)
+        _, pred = torch.max(outputs, 1)
+        test_correct_int8 += (pred == labels).sum().item()
+
+real_int8_acc = 100. * test_correct_int8 / len(test_loader.dataset)
+log_message(f"Real INT8 Deploy Accuracy (CPU): {real_int8_acc:.2f}%")
+
+# 定义路径
 weights_path = os.path.join(model_dir, "resnet18_c10_int8_final.pth")
 deploy_path = os.path.join(model_dir, "resnet18_c10_int8_deploy.pt")
 
+# 导出
 torch.save(int8_model.state_dict(), weights_path)
 example_input = torch.randn(1, 3, 224, 224)
 traced_model = torch.jit.trace(int8_model, example_input)
 torch.jit.save(traced_model, deploy_path)
 
-# --- 7. 总结报表  ---
+# --- 7. 总结 ---
 def get_size_mb(path):
+    """计算文件大小"""
     return os.path.getsize(path) / (1024 * 1024) if os.path.exists(path) else 0
 
 fp32_size = get_size_mb(fp32_path)
 int8_size = get_size_mb(deploy_path)
 
 log_message("=" * 55)
-log_message("QAT Process Finished.")
-log_message(f"Best Test Accuracy: {best_acc:.2f}%")
-log_message(f"Deployment Model Saved: {deploy_path}")
+log_message(f"ResNet18 CIFAR-10 QAT ")
+log_message(f"QAT Simulated Accuracy: {best_acc:.2f}%")
+log_message(f"Real INT8 Accuracy (CPU): {real_int8_acc:.2f}%")
+log_message(f"Accuracy Drop: {best_acc - real_int8_acc:.2f}%")
 log_message(f"FP32 Model Size: {fp32_size:.2f} MB")
 log_message(f"INT8 Deploy Size: {int8_size:.2f} MB")
 log_message(f"Compression Ratio: {fp32_size/int8_size:.2f}x")
 log_message(f"Total Time: {(time.time()-start_time)/60:.2f} mins")
 log_message("=" * 55)
-log_message("Experiment Complete. Ready for Raspberry Pi 5.")
