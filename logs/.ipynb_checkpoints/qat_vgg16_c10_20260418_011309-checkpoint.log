@@ -1,0 +1,4 @@
+[2026-04-18 01:13:09] Environment: cuda | Batch Size: 128 | Epochs: 15 | Engine: qnnpack
+[2026-04-18 01:13:13] FP32 Checkpoint Loaded: /root/autodl-tmp/my_backup/fp32_vgg16_best.pth
+[2026-04-18 01:13:13] VGG16 Fusion: Features (auto) & Classifier (manual) complete.
+[2026-04-18 01:13:14] Epoch     TrainAcc       TestAcc        Loss           
