@@ -24,7 +24,7 @@ os.makedirs(model_dir, exist_ok=True)
 os.makedirs(log_dir, exist_ok=True)
 
 # --- 2. 日志函数 ---
-log_filename = os.path.join(log_dir, f"qat_resnet18_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
+log_filename = os.path.join(log_dir, f"qat_resnet18_192_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
 
 def log_message(msg):
     t = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -115,8 +115,8 @@ for epoch in range(epochs):
     
     if val_acc > best_acc:
         best_acc = val_acc
-        #resnet18_c10_qat_best.pth
-        best_qat_path = os.path.join(model_dir, "resnet18_c10_qat_best.pth")
+        #resnet18_c10_qat_best_192.pth
+        best_qat_path = os.path.join(model_dir, "resnet18_c10_qat_best_192.pth")
         torch.save(model.state_dict(), best_qat_path)
         log_message(f"New Best Accuracy: {best_acc:.2f}%")
 
@@ -140,8 +140,8 @@ real_int8_acc = 100. * test_correct_int8 / len(test_loader.dataset)
 log_message(f"Real INT8 Deploy Accuracy (CPU): {real_int8_acc:.2f}%")
 
 # 定义路径
-weights_path = os.path.join(model_dir, "resnet18_c10_int8_final.pth")
-deploy_path = os.path.join(model_dir, "resnet18_c10_int8_deploy.pt")
+weights_path = os.path.join(model_dir, "resnet18_c10_int8_final_192.pth")
+deploy_path = os.path.join(model_dir, "resnet18_c10_int8_deploy_192.pt")
 
 # 导出
 torch.save(int8_model.state_dict(), weights_path)
