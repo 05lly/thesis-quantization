@@ -1,0 +1,38 @@
+import numpy as np
+import matplotlib.pyplot as plt
+
+# 👉 解决中文显示问题
+plt.rcParams['font.sans-serif'] = ['SimHei']  # 黑体
+plt.rcParams['axes.unicode_minus'] = False
+
+# 👉 数据
+x = np.linspace(-10, 10, 500)
+
+# Sigmoid函数
+sigmoid = 1 / (1 + np.exp(-x))
+
+# 导数
+sigmoid_derivative = sigmoid * (1 - sigmoid)
+
+# 👉 绘图
+plt.figure(figsize=(8, 5))  # 控制比例（后面会缩放到12cm）
+
+plt.plot(x, sigmoid, label='原函数', linewidth=2)
+plt.plot(x, sigmoid_derivative, label='导函数', linewidth=2)
+
+# 标题
+plt.title('Sigmoid(x)', fontsize=14)
+
+# 网格（和你图一致）
+plt.grid(True, linestyle='--', alpha=0.6)
+
+# 图例
+plt.legend()
+
+# 👉 留白关键（防止图太满）
+plt.tight_layout(pad=2)
+
+# 👉 保存（论文标准）
+plt.savefig('sigmoid.png', dpi=300)
+
+plt.show()

@@ -133,7 +133,6 @@ if __name__ == "__main__":
             results_table.append(res)
             # 打印当前行的结果
             log_msg(f"{res[0]:<35} | {res[1]:<6} | {res[2]:<7} | {res[3]:<8} | {res[4]:<7} | {res[5]:<8} | {res[6]:<8} | {res[7]}")
-            # 关键一步：如果是测试列表中的最后一个模型，就不睡了；否则睡 5 秒给 CPU 降降温
             if i < len(my_models) - 1:
                 log_msg(f"  >> 散热保护：等待30秒进行下一次测试...")
                 time.sleep(30)
