@@ -111,8 +111,8 @@ if __name__ == "__main__":
             
             if i < len(target_models) - 1:
                 # 散热时间
-                log_msg(f"  >> 散热保护：等待30秒进行下一次测试...")
-                time.sleep(30)
+                log_msg(f"  >> 散热保护：等待120秒进行下一次测试...")
+                time.sleep(120)
         else:
             log_msg(f"错误: 找不到模型文件 {m}")
 
