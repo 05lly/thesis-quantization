@@ -10,9 +10,9 @@ import psutil
 
 # --- 环境配置 ---
 DATA_PATH = './data'
-torch.set_num_threads(4)
-torch.backends.quantized.engine = 'qnnpack' 
-log_filename = f"Pi5_192_Special_Test_{datetime.now().strftime('%Y%m%d_%H%M')}.log"
+torch.set_num_threads(4) # 树莓派5的4核性能
+torch.backends.quantized.engine = 'qnnpack' # ARM平台的加速引擎
+log_filename = f"Pi5_192_Experiment_{datetime.now().strftime('%Y%m%d_%H%M')}.log"
 logging.basicConfig(level=logging.INFO, format='%(message)s',
                     handlers=[logging.FileHandler(log_filename), logging.StreamHandler()])
 logger = logging.getLogger()
@@ -49,7 +49,10 @@ def get_dataloader(model_name):
 
 def evaluate_model(model_path):
     name = os.path.basename(model_path)
-    log_msg(f"\n>>> 启动专项评估: {name}")
+    log_msg(f"\n>>> 正在准备测试模型: {name}")
+    
+    # 恢复识别精度类型
+    dtype = "INT8" if "int8" in name.lower() else "FP32"
     
     # 核心参数
     input_size = 192
@@ -79,7 +82,7 @@ def evaluate_model(model_path):
     acc = "N/A"
 
     if test_loader:
-        log_msg(f"  正在验证 10,000 张图片的真实 INT8 精度...")
+        log_msg(f"  正在验证 10,000 张图片的真实 {dtype} 精度...")
         correct, total = 0, 0
         with torch.no_grad():
             for imgs, labels in test_loader:
@@ -88,9 +91,8 @@ def evaluate_model(model_path):
                 total += labels.size(0)
                 correct += (pred == labels).sum().item()
         acc = f"{100 * correct / total:.2f}%"
-        
-    realtime = "PASS" if fps >= 24 else "FAIL"
-    return [name, f"{size_mb:.2f}", f"{avg_lat:.2f}", f"{fps:.2f}", f"{mem_mb:.2f}", acc, realtime]
+    realtime = "YES" if fps >= 24 else "NO"
+    return [name, dtype, f"{size_mb:.2f}", f"{avg_lat:.2f}", f"{fps:.2f}", f"{mem_mb:.2f}", acc, realtime]
 
 if __name__ == "__main__":
     target_models = [
@@ -98,20 +100,21 @@ if __name__ == "__main__":
         "resnet18_c100_int8_deploy_192.pt"
     ]
     
-    log_msg("="*100)
-    log_msg(f"{'Target Model (192x192)':<35} | {'Size':<6} | {'Lat(ms)':<8} | {'FPS':<7} | {'Mem':<7} | {'Acc':<8} | {'Status'}")
-    log_msg("-"*100)
+    log_msg("="*105)
+    log_msg(f"{'Model Name':<35} | {'Type':<6} | {'Size':<7} | {'Lat(ms)':<8} | {'FPS':<7} | {'Mem(MB)':<8} | {'Acc':<8} | {'RT'}")
+    log_msg("-"*105)
 
     for i, m in enumerate(target_models):
         if os.path.exists(m):
             res = evaluate_model(m)
-            log_msg(f"{res[0]:<35} | {res[1]:<6} | {res[2]:<8} | {res[3]:<7} | {res[4]:<7} | {res[5]:<8} | {res[6]}")
+            log_msg(f"{res[0]:<35} | {res[1]:<6} | {res[2]:<7} | {res[3]:<8} | {res[4]:<7} | {res[5]:<8} | {res[6]:<8} | {res[7]}")
             
             if i < len(target_models) - 1:
-                log_msg(f"  >> 散热间歇 (30s)...")
+                # 散热时间
+                log_msg(f"  >> 散热保护：等待30秒进行下一次测试...")
                 time.sleep(30)
         else:
             log_msg(f"错误: 找不到模型文件 {m}")
 
-    log_msg("="*100)
-    log_msg(f"\n测试任务完成。")
+    log_msg("="*105)
+    log_msg(f"\n测试结束 实验日志已保存至: {log_filename}")
