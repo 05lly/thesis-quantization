@@ -21,7 +21,7 @@ os.makedirs(log_dir, exist_ok=True)
 def get_int4_qat_qconfig():
     return torch.ao.quantization.QConfig(
         activation=torch.ao.quantization.FakeQuantize.with_args(
-            observer=torch.ao.quantization.HistogramObserver,   # 更强
+            observer=torch.ao.quantization.HistogramObserver,  
             quant_min=0, quant_max=15,
             dtype=torch.quint8,
             qscheme=torch.per_tensor_affine

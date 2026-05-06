@@ -21,13 +21,13 @@ os.makedirs(log_dir, exist_ok=True)
 def get_int4_qat_qconfig():
     return torch.ao.quantization.QConfig(
         activation=torch.ao.quantization.FakeQuantize.with_args(
-            observer=torch.ao.quantization.HistogramObserver,  # ⭐
+            observer=torch.ao.quantization.HistogramObserver,
             quant_min=0, quant_max=15,
             dtype=torch.quint8,
             qscheme=torch.per_tensor_affine
         ),
         weight=torch.ao.quantization.FakeQuantize.with_args(
-            observer=torch.ao.quantization.PerChannelMinMaxObserver,  # ⭐核心
+            observer=torch.ao.quantization.PerChannelMinMaxObserver, 
             quant_min=-8, quant_max=7,
             dtype=torch.qint8,
             qscheme=torch.per_channel_symmetric
@@ -183,6 +183,6 @@ log_message(f" Best Accuracy     : {best_acc:.2f}%")
 log_message(f" FP32 Params Count : {fp32_p/1e6:.3f} M")
 log_message(f" INT4 Params Count : {int4_p/1e6:.3f} M")
 log_message(f" Original Size     : {original_size:.2f} MB")
-log_message(f" Theory Mixed Size : {theory_size:.2f} MB") # ⭐ 这个才是对的
+log_message(f" Theory Mixed Size : {theory_size:.2f} MB")
 log_message(f" Compression Ratio : {original_size / theory_size:.2f} x")
 log_message("=" * 60)

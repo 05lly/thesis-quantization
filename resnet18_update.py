@@ -16,7 +16,6 @@ log_dir = "logs"
 os.makedirs(model_dir, exist_ok=True)
 os.makedirs(log_dir, exist_ok=True)
 
-#核心改进：更强的 INT4 QConfig
 def get_int4_qat_qconfig():
     return torch.ao.quantization.QConfig(
         activation=torch.ao.quantization.FakeQuantize.with_args(
