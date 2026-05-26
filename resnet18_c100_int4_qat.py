@@ -391,3 +391,5 @@ log_message("=" * 70)
 log_message("Deploy model on Raspberry Pi with:")
 log_message(f"  python test_pi5_optimized.py --model {deploy_path}")
 log_message("=" * 70)
+
+
