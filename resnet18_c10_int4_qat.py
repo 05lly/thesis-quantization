@@ -6,11 +6,10 @@ import os
 import time
 import datetime
 from tqdm import tqdm
-from torch.ao.quantization import QConfig, QConfigMapping
-from torch.ao.quantization.quantize_fx import prepare_fx, convert_fx
+from torch.ao.quantization import QConfig
 from torch.ao.quantization.observer import MinMaxObserver, PerChannelMinMaxObserver
-from torch.ao.quantization.fake_quantize import FakeQuantize
-from torch.ao.quantization import default_qconfig_mapping, get_default_qconfig
+from torchao.quantization.quant_api import quantize_qat, Int4WeightQConfigMapping
+from torchao.quantization.quantizers import WeightOnlyInt4Quantizer
 
 # --- 1. 参数配置 --- (保持与用户原有设置一致)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -61,23 +60,23 @@ test_loader = torch.utils.data.DataLoader(
 # --- 4. 创建INT4 QConfig --- 
 log_message("Setting up INT4 QAT configuration...")
 
-# 定义INT4量化配置（激活值INT8，权重INT4）
+# 定义INT4量化配置（使用torchao实现真正的INT4量化）
 def create_int4_qconfig():
-    # 权重使用INT4量化，逐通道对称量化
-    weight_observer = PerChannelMinMaxObserver.with_args(
-        dtype=torch.quint4x2,  # 使用INT4类型
-        qscheme=torch.per_channel_symmetric,  # 逐通道对称量化
-        reduce_range=False
-    )
-    
-    # 激活值使用INT8量化，逐张量非对称量化
+    # 基础INT8量化配置（PyTorch支持）
     activation_observer = MinMaxObserver.with_args(
         dtype=torch.quint8,  # 激活值保持INT8
         qscheme=torch.per_tensor_affine,  # 逐张量非对称量化
         reduce_range=True
     )
     
-    # 创建QConfig
+    # 权重使用INT8配置作为过渡，后续会通过torchao转换为INT4
+    weight_observer = PerChannelMinMaxObserver.with_args(
+        dtype=torch.qint8,  # 使用PyTorch支持的qint8
+        qscheme=torch.per_channel_symmetric,  # 逐通道对称量化
+        reduce_range=False
+    )
+    
+    # 创建基础QConfig
     qconfig = QConfig(
         weight=weight_observer,
         activation=activation_observer
@@ -85,8 +84,10 @@ def create_int4_qconfig():
     
     return qconfig
 
+# 创建基础QConfig
 int4_qconfig = create_int4_qconfig()
-log_message("INT4 QConfig created: Weight(INT4) + Activation(INT8)")
+log_message("INT4 QConfig created: Weight(INT8过渡) + Activation(INT8)")
+log_message("Note: 权重将在后续通过torchao转换为真正的INT4")
 
 # --- 5. 加载FP32模型 --- 
 log_message("Loading FP32 ResNet18 model...")
@@ -138,8 +139,8 @@ log_message("QAT model preparation completed")
 log_message("\nStarting Progressive INT4 QAT Training...")
 log_message("Epoch     TrainAcc       TestAcc        Loss           QAT_Stage      ")
 
-# 定义优化器和损失函数
-optimizer = optim.Adam(model.parameters(), lr=lr)
+# 定义优化器和损失函数（与用户INT8脚本保持一致，使用SGD）
+optimizer = optim.SGD(model.parameters(), lr=lr, momentum=0.9)
 criterion = nn.CrossEntropyLoss()
 
 # 渐进式QAT训练策略
@@ -225,12 +226,21 @@ log_message(f"\nQAT Training Completed in {total_time/60:.2f} minutes")
 log_message(f"Best QAT Accuracy: {best_qat_acc:.2f}%")
 
 # --- 9. 转换为实际INT4模型 --- 
-log_message("\nConverting QAT model to deployed INT4 format...")
+log_message("\nConverting QAT model to deployed INT4 format using torchao...")
 
-# 禁用QAT特性并转换为实际量化模型
+# 使用torchao将模型转换为真正的INT4量化模型
 model.eval()
-int4_model = torch.ao.quantization.convert(model.eval(), inplace=False)
-log_message("INT4 model conversion completed")
+
+# 先转换为INT8模型
+int8_model = torch.ao.quantization.convert(model, inplace=False)
+log_message("INT8 model conversion completed")
+
+# 使用torchao将INT8模型转换为INT4模型（权重INT4，激活INT8）
+log_message("Converting INT8 model to INT4 model with torchao...")
+
+# 使用torchao的WeightOnlyInt4Quantizer
+int4_model = WeightOnlyInt4Quantizer().quantize(int8_model)
+log_message("INT4 model conversion completed with torchao")
 
 # --- 10. 验证实际INT4模型性能 --- 
 log_message("Validating Real INT4 Accuracy...")
