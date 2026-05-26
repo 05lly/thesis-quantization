@@ -1,10 +1,13 @@
+# 解决OpenMP冲突问题
+import os
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+
 import torch
 import torch.nn as nn
 import torchvision.transforms as transforms
 from torchvision import datasets
 import time
 import numpy as np
-import os
 import logging
 from datetime import datetime
 import psutil
@@ -283,27 +286,15 @@ if __name__ == "__main__":
     log_msg(logger, f"[测试环境] 输入图片尺寸: {args.input_size}x{args.input_size}")
     log_msg(logger, f"[测试环境] 日志文件: {log_filename}")
     
-    # 模型列表
+    # 模型列表 - 仅测试升级后的两个ResNet18 INT8模型
     if args.model:
         # 测试指定的单个模型
         models_to_test = [args.model]
     else:
-        # 测试所有可用的ResNet18模型
+        # 仅测试升级后的两个INT8模型
         models_to_test = [
-            # ResNet18模型
-            "resnet18_c10_fp32_deploy.pt",
-            "resnet18_c10_int8_deploy.pt",
-            "resnet18_c10_int4_deploy.pt",
-            "resnet18_c100_fp32_deploy.pt",
-            "resnet18_c100_int8_deploy.pt",
-            "resnet18_c100_int4_deploy.pt",
-            # 优化后的模型
-            "resnet18_int8_optimized_c10_scripted.pt",
-            "resnet18_int4_weight_only_c10_scripted.pt",
-            # MobileNetV2模型（作为对比）
-            "mobilenetv2_c10_fp32_deploy.pt",
-            "mobilenetv2_c10_int8_deploy.pt",
-            "mobilenetv2_c10_int4_deploy.pt",
+            "resnet18_c10_int8_deploy_optimized.pt",   # 优化后的CIFAR10模型
+            "resnet18_c100_int8_deploy_optimized.pt"  # 优化后的CIFAR100模型
         ]
     
     # 开始测试
