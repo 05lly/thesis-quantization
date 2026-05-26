@@ -1,0 +1,54 @@
+[2026-05-26 16:37:25] Environment: cuda | Task: CIFAR-100 QAT | Batch Size: 128 | Epochs: 15 | Engine: qnnpack
+[2026-05-26 16:37:28] FP32 Checkpoint Loaded: /root/autodl-tmp/my_backup/fp32_resnet18_c100_best.pth
+[2026-05-26 16:37:28] Performing enhanced layer fusion...
+[2026-05-26 16:37:28] Enhanced layer fusion completed.
+[2026-05-26 16:37:28] Starting layer sensitivity analysis...
+[2026-05-26 16:37:32] Layer sensitivity analysis completed. Found 50 layers.
+[2026-05-26 16:37:32] Creating optimized QConfig mapping...
+[2026-05-26 16:37:32] Applying selective quantization based on sensitivity analysis...
+[2026-05-26 16:37:32] Found 1 high-sensitivity layers:
+[2026-05-26 16:37:32]   - fc: 1.00
+[2026-05-26 16:37:32] Starting Progressive Quantization Aware Training...
+[2026-05-26 16:37:32] Epoch     TrainAcc       TestAcc        Loss           QAT_Stage      
+[2026-05-26 16:38:27] 1         99.98          83.19          0.0037         Relaxed        
+[2026-05-26 16:38:27] New Best Accuracy: 83.19%
+[2026-05-26 16:39:22] 2         99.98          83.18          0.0038         Relaxed        
+[2026-05-26 16:40:17] 3         99.98          83.23          0.0038         Relaxed        
+[2026-05-26 16:40:17] New Best Accuracy: 83.23%
+[2026-05-26 16:41:11] 4         99.98          83.51          0.0021         Moderate       
+[2026-05-26 16:41:11] New Best Accuracy: 83.51%
+[2026-05-26 16:42:04] 5         99.97          82.83          0.0019         Moderate       
+[2026-05-26 16:42:59] 6         99.99          83.15          0.0017         Moderate       
+[2026-05-26 16:43:53] 7         99.98          83.08          0.0016         Moderate       
+[2026-05-26 16:44:47] 8         99.98          82.98          0.0015         Moderate       
+[2026-05-26 16:45:41] 9         99.98          82.83          0.0014         Moderate       
+[2026-05-26 16:46:35] 10        99.98          83.27          0.0014         Moderate       
+[2026-05-26 16:47:29] 11        99.98          82.90          0.0013         Strict         
+[2026-05-26 16:48:24] 12        99.98          82.98          0.0013         Strict         
+[2026-05-26 16:49:18] 13        99.98          83.10          0.0012         Strict         
+[2026-05-26 16:50:12] 14        99.99          83.05          0.0011         Strict         
+[2026-05-26 16:51:06] 15        99.98          83.03          0.0011         Strict         
+[2026-05-26 16:51:06] Converting QAT model to deployed INT8 format...
+[2026-05-26 16:51:07] Validating Real INT8 Accuracy (CPU)...
+[2026-05-26 17:12:31] Real INT8 Deploy Accuracy (CPU): 83.17%
+[2026-05-26 17:12:32] ======================================================================
+[2026-05-26 17:12:32] ResNet18 CIFAR-100 Optimized QAT Results
+[2026-05-26 17:12:32] ======================================================================
+[2026-05-26 17:12:32] QAT Simulated Accuracy: 83.51%
+[2026-05-26 17:12:32] Real INT8 Accuracy (CPU): 83.17%
+[2026-05-26 17:12:32] Accuracy Drop: 0.34%
+[2026-05-26 17:12:32] FP32 Model Size: 42.91 MB
+[2026-05-26 17:12:32] INT8 Deploy Size: 10.87 MB
+[2026-05-26 17:12:32] Compression Ratio: 3.95x
+[2026-05-26 17:12:32] Total Time: 35.01 mins
+[2026-05-26 17:12:32] ======================================================================
+[2026-05-26 17:12:32] Applied Optimizations:
+[2026-05-26 17:12:32] 1. Layer Sensitivity Analysis for Selective Quantization
+[2026-05-26 17:12:32] 2. Optimized QConfig Mapping with Layer-wise Configuration
+[2026-05-26 17:12:32] 3. Progressive QAT Training with 3 Stages
+[2026-05-26 17:12:32] 4. Enhanced Layer Fusion for Better Performance
+[2026-05-26 17:12:32] 5. Weight Decay for Improved Generalization
+[2026-05-26 17:12:32] 6. Modern QAT API Usage
+[2026-05-26 17:12:32] ======================================================================
+[2026-05-26 17:12:32] Deploy model on Raspberry Pi with:
+[2026-05-26 17:12:32]   python test_pi5_optimized.py --model /root/autodl-tmp/my_backup/resnet18_c100_int8_deploy_optimized.pt
