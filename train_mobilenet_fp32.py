@@ -37,7 +37,7 @@ transform_train = transforms.Compose([
     transforms.RandomHorizontalFlip(),
     transforms.RandomRotation(15),
     transforms.ToTensor(),
-    transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
+    transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),#数据增强与归一化
 ])
 
 transform_test = transforms.Compose([
@@ -98,7 +98,7 @@ for epoch in range(epochs):
         best_acc = acc
         save_path = os.path.join(model_dir, "fp32_mobilenetv2_best.pth")
         torch.save(model.state_dict(), save_path)
-        log_message(f"  --> 精度提升！已保存至: {save_path}")
+        log_message(f"  精度提升！已保存至: {save_path}")
 
 # --- 6. 实验总结 ---
 log_message("\n" + "=" * 55)

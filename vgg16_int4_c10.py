@@ -45,8 +45,8 @@ def get_int4_qat_qconfig():
             observer=torch.ao.quantization.MovingAverageMinMaxObserver,
             quant_min=0, quant_max=15, dtype=torch.quint8, qscheme=torch.per_tensor_affine),
         weight=torch.ao.quantization.FakeQuantize.with_args(
-            observer=torch.ao.quantization.MovingAverageMinMaxObserver,
-            quant_min=-8, quant_max=7, dtype=torch.qint8, qscheme=torch.per_tensor_symmetric)
+            observer=torch.ao.quantization.MovingAveragePerChannelMinMaxObserver,
+            quant_min=-8, quant_max=7, dtype=torch.qint8, qscheme=torch.per_channel_symmetric)
     )
 
 log_filename = os.path.join(log_dir, f"qat_int4_vgg16_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.log")

@@ -13,7 +13,7 @@ log_dir = "logs"
 os.makedirs(model_dir, exist_ok=True)
 os.makedirs(log_dir, exist_ok=True)
 
-# VGG16 需要手动插入 QuantStub
+# VGG16手动插入QuantStub
 class QuantizableVGG16(nn.Module):
     def __init__(self, num_classes=100):
         super().__init__()
@@ -49,8 +49,8 @@ def get_int4_qat_qconfig():
             observer=torch.ao.quantization.MovingAverageMinMaxObserver,
             quant_min=0, quant_max=15, dtype=torch.quint8, qscheme=torch.per_tensor_affine),
         weight=torch.ao.quantization.FakeQuantize.with_args(
-            observer=torch.ao.quantization.MovingAverageMinMaxObserver,
-            quant_min=-8, quant_max=7, dtype=torch.qint8, qscheme=torch.per_tensor_symmetric)
+            observer=torch.ao.quantization.MovingAveragePerChannelMinMaxObserver,
+            quant_min=-8, quant_max=7, dtype=torch.qint8, qscheme=torch.per_channel_symmetric)
     )
 
 log_filename = os.path.join(log_dir, f"qat_int4_vgg16_c100_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.log")

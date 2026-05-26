@@ -8,7 +8,7 @@ import time
 import datetime
 from tqdm import tqdm
 
-# --- 1. 参数配置---
+# 参数配置
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 torch.backends.quantized.engine = 'qnnpack'  # 树莓派 5 
 batch_size = 128
@@ -24,7 +24,7 @@ log_dir = "logs"
 os.makedirs(model_dir, exist_ok=True)
 os.makedirs(log_dir, exist_ok=True)
 
-# --- 2. 日志函数---
+# 日志函数
 log_filename = os.path.join(log_dir, f"qat_mobilenetv2_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
 
 def log_message(msg):
@@ -36,7 +36,7 @@ def log_message(msg):
 
 log_message(f"Environment: {device} | Batch Size: {batch_size} | Epochs: {epochs}")
 
-# --- 3. 数据处理 ---
+#数据处理
 transform_qat = transforms.Compose([
     transforms.Resize(224),
     transforms.RandomHorizontalFlip(),
@@ -52,7 +52,7 @@ test_loader = torch.utils.data.DataLoader(
     datasets.CIFAR10('./data', train=False, download=True, transform=transform_qat),
     batch_size=batch_size, shuffle=False, num_workers=4, pin_memory=True)
 
-# --- 4. 模型准备与权重加载 ---
+# 模型准备与权重加载
 model = mobilenet_v2(weights=None, quantize=False)
 model.classifier[1] = nn.Linear(model.last_channel, 10)
 
@@ -61,7 +61,7 @@ if not os.path.exists(fp32_path):
     log_message(f" Error: {fp32_path} not found! Please run FP32 training first.")
     exit()
 
-# 加载 FP32 权重
+# 加载FP32权重到模型
 model.load_state_dict(torch.load(fp32_path, map_location='cpu', weights_only=True))
 model.to(device)
 log_message(f"Checkpoint loaded: {fp32_path}")
@@ -76,14 +76,13 @@ torch.ao.quantization.prepare_qat(model, inplace=True)
 optimizer = optim.SGD(model.parameters(), lr=lr, momentum=0.9)
 criterion = nn.CrossEntropyLoss()
 
-# --- 5. QAT 微调循环 (精度恢复) ---
+# QAT 微调循环 
 best_acc = 0.0
 start_time = time.time()
 log_message(f"{'Epoch':<10}{'TrainAcc':<15}{'TestAcc':<15}{'Loss':<15}")
 
 for epoch in range(epochs):
     model.train()
-    # 冻结 BN 和观察器以稳定量化参数
     if epoch > 3:
         model.apply(torch.ao.quantization.disable_observer)
         model.apply(torch.nn.intrinsic.qat.freeze_bn_stats)
@@ -102,7 +101,6 @@ for epoch in range(epochs):
         total += labels.size(0)
         correct += (pred == labels).sum().item()
 
-    # 验证模拟量化精度 (TestAcc)
     model.eval()
     test_correct = 0
     with torch.no_grad():
@@ -123,13 +121,13 @@ for epoch in range(epochs):
         torch.save(model.state_dict(), os.path.join(model_dir, "mobilenetv2_c10_qat_best.pth"))
         log_message(f"--- Saved best model: {best_acc:.2f}% ---")
 
-# --- 6. 最终转换与部署导出 ---
+# 最终转换与部署导出
 log_message("Converting QAT model to deployed INT8 format...")
 best_qat_path = os.path.join(model_dir, "mobilenetv2_c10_qat_best.pth")
 model.load_state_dict(torch.load(best_qat_path, map_location='cpu', weights_only=True))
 model.to('cpu').eval()
 
-# 1. 物理转换 (FP32 -> INT8)
+# 物理转换 (FP32 -> INT8)
 int8_model = torch.ao.quantization.convert(model, inplace=False)
 
 #Real INT8 Accuracy
@@ -145,18 +143,18 @@ with torch.no_grad():
 real_int8_acc = 100. * test_correct_int8 / len(test_loader.dataset)
 log_message(f"Real INT8 Deploy Accuracy (CPU): {real_int8_acc:.2f}%")
 
-# 2. 导出 TorchScript
+#导出 TorchScript
 example_input = torch.randn(1, 3, 224, 224)
 traced_model = torch.jit.trace(int8_model, example_input)
 
-# 3. 保存文件
+# 保存文件
 weights_path = os.path.join(model_dir, "mobilenetv2_c10_int8_final.pth")
 deploy_path = os.path.join(model_dir, "mobilenetv2_c10_int8_deploy.pt")
 
 torch.save(int8_model.state_dict(), weights_path)
 torch.jit.save(traced_model, deploy_path)
 
-# --- 7.总结---
+# 总结
 def get_size_mb(path):
     return os.path.getsize(path) / (1024 * 1024) if os.path.exists(path) else 0
 
@@ -167,7 +165,7 @@ log_message("=" * 55)
 log_message(f"MobileNetV2 CIFAR-10 QAT ") 
 log_message(f"QAT Simulated Accuracy: {best_acc:.2f}%")
 log_message(f"Real INT8 Accuracy (CPU): {real_int8_acc:.2f}%")
-log_message(f"Accuracy Drop: {best_acc - real_int8_acc:.2f}%") # 关键指标
+log_message(f"Accuracy Drop: {best_acc - real_int8_acc:.2f}%") 
 log_message(f"FP32 Model Size: {fp32_size:.2f} MB")
 log_message(f"INT8 Deploy Size: {int8_size:.2f} MB")
 log_message(f"Compression Ratio: {fp32_size/int8_size:.2f}x")

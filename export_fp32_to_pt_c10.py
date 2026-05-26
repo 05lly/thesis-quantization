@@ -40,11 +40,9 @@ def export_model(model_name, pth_filename, pt_filename, structure_func=None):
         if structure_func:
             model = structure_func()
         elif model_name == "ResNet18":
-            # 训练时用了 models.quantization.resnet18
             model = models.quantization.resnet18(weights=None, quantize=False)
             model.fc = nn.Linear(model.fc.in_features, num_classes)
         elif model_name == "MobileNetV2":
-            # 训练时用了标准 models.mobilenet_v2
             model = models.quantization.mobilenet_v2(weights=None, quantize=False)
             model.classifier[1] = nn.Linear(model.last_channel, num_classes)
         # 2. 加载权重
