@@ -169,7 +169,12 @@ def progressive_qat_training(model, train_loader, test_loader, epochs, optimizer
         if epoch < 3:
             # 阶段1：宽松的量化（保持观察器开启，BN不冻结）
             model.apply(torch.ao.quantization.enable_observer)
-            model.apply(torch.nn.intrinsic.qat.unfreeze_bn_stats)
+            # 解冻BN统计信息的正确方法
+            for module in model.modules():
+                if hasattr(module, 'training'):
+                    module.training = True
+                    if hasattr(module, 'freeze_bn'):
+                        module.freeze_bn = False
             qat_stage = "Relaxed"
         elif epoch < 10:
             # 阶段2：中度量化（冻结部分观察器，BN开始冻结）
