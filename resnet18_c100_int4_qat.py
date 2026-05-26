@@ -228,6 +228,8 @@ log_message("\nConverting QAT model to deployed INT4 format...")
 
 # 使用PyTorch内置功能转换为INT8模型
 model.eval()
+# 确保模型在CPU上进行INT8转换（QNNPACK后端需要CPU）
+model.to('cpu')
 int8_model = torch.ao.quantization.convert(model, inplace=False)
 log_message("INT8 model conversion completed")
 

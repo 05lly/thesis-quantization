@@ -8,8 +8,6 @@ import datetime
 from tqdm import tqdm
 from torch.ao.quantization import QConfig
 from torch.ao.quantization.observer import MinMaxObserver, PerChannelMinMaxObserver
-from torchao.quantization.quant_api import quantize_qat, Int4WeightQConfigMapping
-from torchao.quantization.quantizers import WeightOnlyInt4Quantizer
 
 # --- 1. 参数配置 --- (保持与用户原有设置一致)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -232,6 +230,8 @@ log_message("\nConverting QAT model to deployed INT4 format using torchao...")
 model.eval()
 
 # 先转换为INT8模型
+# 确保模型在CPU上进行INT8转换（QNNPACK后端需要CPU）
+model.to('cpu')
 int8_model = torch.ao.quantization.convert(model, inplace=False)
 log_message("INT8 model conversion completed")
 
