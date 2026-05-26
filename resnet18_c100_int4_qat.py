@@ -8,7 +8,6 @@ import datetime
 from tqdm import tqdm
 from torch.ao.quantization import QConfig
 from torch.ao.quantization.observer import MinMaxObserver, PerChannelMinMaxObserver
-from torchao.quantization import quantize_, Int4WeightOnlyConfig
 
 # --- 1. 参数配置 --- (保持与用户原有设置一致)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -225,22 +224,20 @@ log_message(f"\nQAT Training Completed in {total_time/60:.2f} minutes")
 log_message(f"Best QAT Accuracy: {best_qat_acc:.2f}%")
 
 # --- 9. 转换为实际INT4模型 --- 
-log_message("\nConverting QAT model to deployed INT4 format using torchao...")
+log_message("\nConverting QAT model to deployed INT4 format...")
 
-# 使用torchao将模型转换为真正的INT4量化模型
+# 使用PyTorch内置功能转换为INT8模型
 model.eval()
-
-# 先转换为INT8模型
 int8_model = torch.ao.quantization.convert(model, inplace=False)
 log_message("INT8 model conversion completed")
 
-# 使用torchao将INT8模型转换为INT4模型（权重INT4，激活INT8）
-log_message("Converting INT8 model to INT4 model with torchao...")
+# 使用自定义INT4量化器将权重转换为INT4
+log_message("Converting INT8 model to INT4 model with custom quantizer...")
 
-# 使用torchao 0.13.0的quantize_函数和Int4WeightOnlyConfig
-int4_config = Int4WeightOnlyConfig(group_size=32, version=1)
-int4_model = quantize_(int8_model, int4_config)
-log_message("INT4 model conversion completed with torchao")
+# 使用自定义的INT4权重量化器
+int4_quantizer = CustomInt4Quantizer(group_size=32)
+int4_model = int4_quantizer.quantize(int8_model)
+log_message("INT4 model conversion completed with custom quantizer")
 
 # --- 10. 验证实际INT4模型性能 --- 
 log_message("Validating Real INT4 Accuracy...")
@@ -269,6 +266,105 @@ traced_model = torch.jit.trace(int4_model, example_input)
 torch.jit.save(traced_model, deploy_path)
 
 log_message(f"INT4 deploy model saved to: {deploy_path}")
+
+# --- 自定义INT4量化实现 --- 
+class CustomInt4Quantizer:
+    """
+    自定义INT4权重量化器，不依赖torchao
+    实现真正的INT4权重量化（有符号4位整数，范围[-8, 7]）
+    """
+    def __init__(self, group_size=32):
+        self.group_size = group_size
+    
+    def quantize_tensor(self, tensor):
+        """
+        将FP32张量量化为INT4
+        返回量化后的张量和缩放因子
+        """
+        # 确保输入是FP32
+        tensor = tensor.to(torch.float32)
+        
+        # 按组大小分割张量进行量化（每group_size个元素一组）
+        original_shape = tensor.shape
+        
+        # 如果是线性层权重 [out_features, in_features]
+        if len(original_shape) == 2:
+            out_features, in_features = original_shape
+            
+            # 调整分组大小以适应输入特征数
+            if in_features % self.group_size != 0:
+                adjusted_group_size = in_features
+            else:
+                adjusted_group_size = self.group_size
+            
+            # 重塑张量以进行分组量化 [out_features, in_features // adjusted_group_size, adjusted_group_size]
+            tensor_reshaped = tensor.reshape(out_features, -1, adjusted_group_size)
+            
+            # 计算每组的缩放因子（取绝对值最大值）
+            max_vals = tensor_reshaped.abs().max(dim=-1, keepdim=True)[0]
+            
+            # 处理零值情况
+            max_vals = torch.where(max_vals == 0, torch.ones_like(max_vals), max_vals)
+            
+            # 计算缩放因子：将最大值映射到7.0（INT4有符号最大值）
+            scales = max_vals / 7.0
+            
+            # 确保缩放因子不为零
+            scales = torch.where(scales == 0, torch.ones_like(scales), scales)
+            
+            # 量化：缩放并舍入到最近的整数
+            quantized = torch.round(tensor_reshaped / scales).clamp(-8, 7)
+            
+            # 重塑回原始形状
+            quantized = quantized.reshape(original_shape)
+            scales = scales.reshape(out_features, -1, 1).expand(-1, -1, adjusted_group_size).reshape(original_shape)
+        
+        # 其他类型张量的量化
+        else:
+            # 简单的逐张量量化
+            max_val = tensor.abs().max()
+            max_val = max_val if max_val != 0 else 1.0
+            scale = max_val / 7.0
+            scale = scale if scale != 0 else 1.0
+            quantized = torch.round(tensor / scale).clamp(-8, 7)
+            scales = scale * torch.ones_like(tensor)
+        
+        return quantized.to(torch.int8), scales
+    
+    def quantize(self, model):
+        """
+        量化模型中的所有线性层权重为INT4
+        """
+        for name, module in model.named_children():
+            if isinstance(module, nn.Linear):
+                # 量化权重
+                quantized_weight, scale = self.quantize_tensor(module.weight.data)
+                
+                # 替换为量化后的权重和缩放因子
+                module.weight.data = quantized_weight.to(torch.int8)
+                module.register_buffer('weight_scale', scale)
+                
+                # 替换forward方法以支持INT4推理，使用lambda解决闭包问题
+                def make_forward_func(current_module):
+                    def new_forward(input):
+                        # 将输入转换为FP32
+                        input_fp32 = input.to(torch.float32)
+                        # 获取量化权重和缩放因子
+                        quant_weight = current_module.weight.data.to(torch.float32)
+                        weight_scale = current_module.weight_scale
+                        # 反量化权重：quant_weight * weight_scale
+                        dequantized_weight = quant_weight * weight_scale
+                        # 执行矩阵乘法
+                        return nn.functional.linear(input_fp32, dequantized_weight, current_module.bias)
+                    return new_forward
+                
+                module.forward = make_forward_func(module)
+            
+            # 递归处理子模块
+            elif hasattr(module, 'children'):
+                self.quantize(module)
+        
+        return model
 
 # --- 12. 总结报告 --- 
 def get_size_mb(path):
