@@ -1,0 +1,55 @@
+[2026-05-26 14:57:35] Environment: cuda | Batch Size: 128 | Epochs: 15 | Engine: qnnpack
+[2026-05-26 14:57:37] FP32 Checkpoint Loaded: /root/autodl-tmp/my_backup/fp32_resnet18_best.pth
+[2026-05-26 14:57:37] Performing enhanced layer fusion...
+[2026-05-26 14:57:37] Enhanced layer fusion completed.
+[2026-05-26 14:57:37] Starting layer sensitivity analysis...
+[2026-05-26 14:57:41] Layer sensitivity analysis completed. Found 50 layers.
+[2026-05-26 14:57:41] Creating optimized QConfig mapping...
+[2026-05-26 14:57:41] Applying selective quantization based on sensitivity analysis...
+[2026-05-26 14:57:41] Found 1 high-sensitivity layers:
+[2026-05-26 14:57:41]   - fc: 1.00
+[2026-05-26 14:57:41] Starting Progressive Quantization Aware Training...
+[2026-05-26 14:57:41] Epoch     TrainAcc       TestAcc        Loss           QAT_Stage      
+[2026-05-26 14:58:36] 1         100.00         96.42          0.0005         Relaxed        
+[2026-05-26 14:58:36] New Best Accuracy: 96.42%
+[2026-05-26 14:59:31] 2         100.00         96.29          0.0006         Relaxed        
+[2026-05-26 15:00:25] 3         100.00         96.38          0.0005         Relaxed        
+[2026-05-26 15:01:20] 4         100.00         96.37          0.0002         Moderate       
+[2026-05-26 15:02:14] 5         100.00         96.32          0.0002         Moderate       
+[2026-05-26 15:03:08] 6         100.00         96.48          0.0002         Moderate       
+[2026-05-26 15:03:08] New Best Accuracy: 96.48%
+[2026-05-26 15:04:02] 7         100.00         96.42          0.0002         Moderate       
+[2026-05-26 15:04:57] 8         100.00         96.54          0.0002         Moderate       
+[2026-05-26 15:04:57] New Best Accuracy: 96.54%
+[2026-05-26 15:05:51] 9         100.00         96.46          0.0002         Moderate       
+[2026-05-26 15:06:45] 10        100.00         96.61          0.0002         Moderate       
+[2026-05-26 15:06:45] New Best Accuracy: 96.61%
+[2026-05-26 15:07:39] 11        100.00         96.45          0.0002         Strict         
+[2026-05-26 15:08:33] 12        100.00         96.54          0.0002         Strict         
+[2026-05-26 15:09:27] 13        100.00         96.30          0.0001         Strict         
+[2026-05-26 15:10:21] 14        100.00         96.37          0.0001         Strict         
+[2026-05-26 15:11:15] 15        100.00         96.34          0.0001         Strict         
+[2026-05-26 15:11:15] Converting QAT model to deployed INT8 format...
+[2026-05-26 15:11:15] Validating Real INT8 Accuracy (CPU)...
+[2026-05-26 15:33:03] Real INT8 Deploy Accuracy (CPU): 96.61%
+[2026-05-26 15:33:04] ======================================================================
+[2026-05-26 15:33:04] ResNet18 CIFAR-10 Optimized QAT Results
+[2026-05-26 15:33:04] ======================================================================
+[2026-05-26 15:33:04] QAT Simulated Accuracy: 96.61%
+[2026-05-26 15:33:04] Real INT8 Accuracy (CPU): 96.61%
+[2026-05-26 15:33:04] Accuracy Drop: 0.00%
+[2026-05-26 15:33:04] FP32 Model Size: 42.73 MB
+[2026-05-26 15:33:04] INT8 Deploy Size: 10.83 MB
+[2026-05-26 15:33:04] Compression Ratio: 3.95x
+[2026-05-26 15:33:04] Total Time: 35.38 mins
+[2026-05-26 15:33:04] ======================================================================
+[2026-05-26 15:33:04] Applied Optimizations:
+[2026-05-26 15:33:04] 1. Layer Sensitivity Analysis for Selective Quantization
+[2026-05-26 15:33:04] 2. Optimized QConfig Mapping with Layer-wise Configuration
+[2026-05-26 15:33:04] 3. Progressive QAT Training with 3 Stages
+[2026-05-26 15:33:04] 4. Enhanced Layer Fusion for Better Performance
+[2026-05-26 15:33:04] 5. Weight Decay for Improved Generalization
+[2026-05-26 15:33:04] 6. Modern QAT API Usage
+[2026-05-26 15:33:04] ======================================================================
+[2026-05-26 15:33:04] Deploy model on Raspberry Pi with:
+[2026-05-26 15:33:04]   python test_pi5_optimized.py --model /root/autodl-tmp/my_backup/resnet18_c10_int8_deploy_optimized.pt
