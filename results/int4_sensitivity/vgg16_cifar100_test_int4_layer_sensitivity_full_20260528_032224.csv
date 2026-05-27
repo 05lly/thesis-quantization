@@ -1,0 +1,17 @@
+﻿rank_placeholder,layer_index,layer_name,layer_type,parameters,baseline_acc,int4_single_layer_acc,accuracy_drop,elapsed_seconds
+1,1,features.0,Conv2d,1792,79.31,78.46,0.85,13.48
+2,3,features.5,Conv2d,73856,79.31,79.15,0.16,13.44
+3,12,features.26,Conv2d,2359808,79.31,79.19,0.12,13.34
+4,15,classifier.3,Linear,16781312,79.31,79.19,0.12,13.71
+5,4,features.7,Conv2d,147584,79.31,79.22,0.09,13.33
+6,7,features.14,Conv2d,590080,79.31,79.25,0.06,13.0
+7,8,features.17,Conv2d,1180160,79.31,79.25,0.06,13.5
+8,6,features.12,Conv2d,590080,79.31,79.26,0.05,13.44
+9,9,features.19,Conv2d,2359808,79.31,79.28,0.03,13.43
+10,16,classifier.6,Linear,409700,79.31,79.33,-0.02,13.52
+11,10,features.21,Conv2d,2359808,79.31,79.35,-0.04,13.56
+12,14,classifier.0,Linear,102764544,79.31,79.35,-0.04,13.88
+13,11,features.24,Conv2d,2359808,79.31,79.38,-0.07,13.49
+14,5,features.10,Conv2d,295168,79.31,79.39,-0.08,13.44
+15,2,features.2,Conv2d,36928,79.31,79.49,-0.18,13.44
+16,13,features.28,Conv2d,2359808,79.31,79.49,-0.18,13.46
