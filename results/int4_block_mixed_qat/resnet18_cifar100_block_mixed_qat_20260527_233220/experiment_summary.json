@@ -1,0 +1,98 @@
+{
+  "experiment": "resnet18_block_mixed_precision_int4_qat",
+  "timestamp": "20260527_233220",
+  "dataset": "cifar100",
+  "fp32_checkpoint": "/root/autodl-tmp/my_backup/fp32_resnet18_c100_best.pth",
+  "best_checkpoint": "/root/autodl-tmp/my_backup/resnet18_cifar100_block_mixed_int4_qat_best.pth",
+  "best_test_accuracy": 77.13,
+  "best_epoch": 24,
+  "int8_blocks": [
+    "layer3.1",
+    "layer2.0",
+    "layer2.1",
+    "layer3.0"
+  ],
+  "block_assignments": [
+    {
+      "block_name": "layer3.1",
+      "module_prefixes": [
+        "layer3.1"
+      ],
+      "matched_modules": [
+        "layer3.1.conv1.0",
+        "layer3.1.conv2.0"
+      ],
+      "parameter_count": 1180672
+    },
+    {
+      "block_name": "layer2.0",
+      "module_prefixes": [
+        "layer2.0"
+      ],
+      "matched_modules": [
+        "layer2.0.conv1.0",
+        "layer2.0.conv2.0",
+        "layer2.0.downsample.0.0"
+      ],
+      "parameter_count": 230144
+    },
+    {
+      "block_name": "layer2.1",
+      "module_prefixes": [
+        "layer2.1"
+      ],
+      "matched_modules": [
+        "layer2.1.conv1.0",
+        "layer2.1.conv2.0"
+      ],
+      "parameter_count": 295424
+    },
+    {
+      "block_name": "layer3.0",
+      "module_prefixes": [
+        "layer3.0"
+      ],
+      "matched_modules": [
+        "layer3.0.conv1.0",
+        "layer3.0.conv2.0",
+        "layer3.0.downsample.0.0"
+      ],
+      "parameter_count": 919040
+    }
+  ],
+  "matched_int8_modules": [
+    "layer2.0.conv1.0",
+    "layer2.0.conv2.0",
+    "layer2.0.downsample.0.0",
+    "layer2.1.conv1.0",
+    "layer2.1.conv2.0",
+    "layer3.0.conv1.0",
+    "layer3.0.conv2.0",
+    "layer3.0.downsample.0.0",
+    "layer3.1.conv1.0",
+    "layer3.1.conv2.0"
+  ],
+  "total_quantizable_modules": 21,
+  "int8_quantizable_modules": 10,
+  "int4_quantizable_modules": 11,
+  "fp32_checkpoint_size_mb": 42.90872,
+  "theoretical_mixed_precision_size_mb": 6.605669,
+  "training_history_csv": "results/int4_block_mixed_qat/resnet18_cifar100_block_mixed_qat_20260527_233220/training_history.csv",
+  "log_path": "logs/resnet18_block_mixed_precision_qat_cifar100_20260527_233220.log",
+  "output_dir": "results/int4_block_mixed_qat/resnet18_cifar100_block_mixed_qat_20260527_233220",
+  "total_time_minutes": 28.8634,
+  "args": {
+    "dataset": "cifar100",
+    "checkpoint": "/root/autodl-tmp/my_backup/fp32_resnet18_c100_best.pth",
+    "int8_blocks": "layer3.1,layer2.0,layer2.1,layer3.0",
+    "device": "cuda",
+    "batch_size": 128,
+    "num_workers": 4,
+    "input_size": 224,
+    "epochs": 30,
+    "lr": 0.0001,
+    "weight_decay": 0.0001,
+    "freeze_epoch": 8
+  },
+  "note": "Theoretical size is parameter-bit based. This script uses PyTorch fake quantization for QAT research and does not validate real INT4 deployment."
+}
