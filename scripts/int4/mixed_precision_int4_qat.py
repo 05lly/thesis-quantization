@@ -298,14 +298,17 @@ def train_mixed_precision_qat(args: argparse.Namespace) -> None:
     load_state_dict_safely(model, checkpoint_path)
     model.to(device)
 
-    fuse_model_if_supported(model, is_qat=True)
     model.train()
     total_layers, int8_layers, matched_sensitive_layers = assign_mixed_precision_qconfig(model, rows, sensitive_layers, log_message)
     int4_layers = total_layers - int8_layers
     log_message(f"CSV quantizable layers: {total_layers} | Matched INT8 sensitive layers: {int8_layers} | INT4 layers: {int4_layers}")
+
+    fuse_model_if_supported(model, is_qat=True)
     if int8_layers == 0:
         raise RuntimeError("No sensitive layers were matched. Please check whether the sensitivity CSV matches the selected model.")
 
+    # prepare_qat requires training mode; fusion may switch the model to eval mode.
+    model.train()
     torch.ao.quantization.prepare_qat(model, inplace=True)
     optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=0.9, weight_decay=args.weight_decay)
     scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)

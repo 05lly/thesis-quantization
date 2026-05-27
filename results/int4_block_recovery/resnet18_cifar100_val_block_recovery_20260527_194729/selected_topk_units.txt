@@ -1,0 +1,8 @@
+Top-5 units by block-level recovery gain
+All-INT4 baseline accuracy: 24.4000%
+
+rank=1 unit=layer3.1 gain=9.84 acc=34.24 modules=layer3.1.conv1;layer3.1.conv2
+rank=2 unit=layer2.0 gain=8.32 acc=32.72 modules=layer2.0.conv1;layer2.0.conv2;layer2.0.downsample.0
+rank=3 unit=layer2.1 gain=5.64 acc=30.04 modules=layer2.1.conv1;layer2.1.conv2
+rank=4 unit=layer3.0 gain=4.82 acc=29.22 modules=layer3.0.conv1;layer3.0.conv2;layer3.0.downsample.0
+rank=5 unit=layer1.1 gain=2.68 acc=27.08 modules=layer1.1.conv1;layer1.1.conv2
