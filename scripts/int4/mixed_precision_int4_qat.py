@@ -205,23 +205,34 @@ def select_sensitive_layers(rows: List[Dict[str, str]], sensitive_ratio: float, 
     return {row["layer_name"] for row in rows[:keep_count]}
 
 
-def assign_mixed_precision_qconfig(model: nn.Module, sensitive_layers: Set[str], logger) -> Tuple[int, int]:
+def assign_mixed_precision_qconfig(model: nn.Module, sensitivity_rows: List[Dict[str, str]], sensitive_layers: Set[str], logger) -> Tuple[int, int, Set[str]]:
+    """Assign INT8 qconfig to sensitive layers and INT4 qconfig to others.
+
+    Layer names come from the sensitivity CSV generated before fusion. After
+    fusion, modules such as Conv2d + ReLU may become fused modules, so we should
+    not rely only on isinstance(module, nn.Conv2d). Instead, the CSV layer names
+    are treated as the authoritative quantizable layer list.
+    """
     int4_qconfig = get_int4_qat_qconfig()
     int8_qconfig = get_int8_qat_qconfig()
-    quantizable_count = 0
-    int8_count = 0
+    csv_layers = {row["layer_name"] for row in sensitivity_rows}
+    matched_sensitive_layers: Set[str] = set()
 
+    # Default: all modules inherit INT4 unless explicitly overridden.
     model.qconfig = int4_qconfig
     for name, module in model.named_modules():
-        if isinstance(module, (nn.Conv2d, nn.Linear)):
-            quantizable_count += 1
-            if name in sensitive_layers:
-                module.qconfig = int8_qconfig
-                int8_count += 1
-                logger(f"[QCONFIG] INT8 sensitive layer: {name}")
-            else:
-                module.qconfig = int4_qconfig
-    return quantizable_count, int8_count
+        if name in csv_layers:
+            module.qconfig = int4_qconfig
+        if name in sensitive_layers:
+            module.qconfig = int8_qconfig
+            matched_sensitive_layers.add(name)
+            logger(f"[QCONFIG] INT8 sensitive layer: {name} ({module.__class__.__name__})")
+
+    unmatched = sensitive_layers - matched_sensitive_layers
+    if unmatched:
+        logger(f"[WARN] Sensitive layers not matched after model construction/fusion: {sorted(unmatched)}")
+
+    return len(csv_layers), len(matched_sensitive_layers), matched_sensitive_layers
 
 
 def fuse_model_if_supported(model: nn.Module, is_qat: bool = True) -> None:
@@ -289,9 +300,11 @@ def train_mixed_precision_qat(args: argparse.Namespace) -> None:
 
     fuse_model_if_supported(model, is_qat=True)
     model.train()
-    total_layers, int8_layers = assign_mixed_precision_qconfig(model, sensitive_layers, log_message)
+    total_layers, int8_layers, matched_sensitive_layers = assign_mixed_precision_qconfig(model, rows, sensitive_layers, log_message)
     int4_layers = total_layers - int8_layers
-    log_message(f"Quantizable layers: {total_layers} | INT8 sensitive layers: {int8_layers} | INT4 layers: {int4_layers}")
+    log_message(f"CSV quantizable layers: {total_layers} | Matched INT8 sensitive layers: {int8_layers} | INT4 layers: {int4_layers}")
+    if int8_layers == 0:
+        raise RuntimeError("No sensitive layers were matched. Please check whether the sensitivity CSV matches the selected model.")
 
     torch.ao.quantization.prepare_qat(model, inplace=True)
     optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=0.9, weight_decay=args.weight_decay)
@@ -348,6 +361,7 @@ def train_mixed_precision_qat(args: argparse.Namespace) -> None:
     log_message(f"Best Test Accuracy: {best_acc:.2f}%")
     log_message(f"INT8 Sensitive Layers: {int8_layers}/{total_layers}")
     log_message(f"INT4 Layers: {int4_layers}/{total_layers}")
+    log_message(f"Matched INT8 Layer Names: {sorted(matched_sensitive_layers)}")
     log_message(f"FP32 Checkpoint Size: {fp32_size_mb:.2f} MB")
     log_message(f"Theoretical Mixed-Precision Size: {mixed_size_mb:.2f} MB")
     log_message(f"Total Time: {(time.time() - start_time) / 60:.2f} min")
