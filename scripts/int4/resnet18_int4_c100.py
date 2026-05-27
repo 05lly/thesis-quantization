@@ -8,7 +8,9 @@ from tqdm import tqdm
 # --- 1. 配置 ---
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 batch_size, epochs, lr = 128, 30, 1e-4
+
 model_dir = "/root/autodl-tmp/my_backup" if os.path.exists("/root/autodl-tmp") else "models"
+data_root = "/root/autodl-tmp/data" if os.path.exists("/root/autodl-tmp") else "./data"
 log_dir = "logs"
 os.makedirs(model_dir, exist_ok=True)
 os.makedirs(log_dir, exist_ok=True)
@@ -30,16 +32,50 @@ def log_message(msg):
     print(full_msg)
     with open(log_filename, "a", encoding="utf-8") as f: f.write(full_msg + "\n")
 
-# --- 2. 数据处理 ---
-transform = transforms.Compose([
+# --- 2. 数据处理：CIFAR-100 ---
+# 训练集可以使用随机增强；测试集必须固定，不能使用 RandomHorizontalFlip
+transform_train = transforms.Compose([
     transforms.Resize(224),
     transforms.RandomHorizontalFlip(),
     transforms.ToTensor(),
-    transforms.Normalize((0.5071, 0.4867, 0.4408), (0.2675, 0.2565, 0.2761)),
+    transforms.Normalize(
+        (0.5071, 0.4867, 0.4408),
+        (0.2675, 0.2565, 0.2761),
+    ),
 ])
-train_loader = torch.utils.data.DataLoader(datasets.CIFAR100('/root/autodl-tmp/data', train=True, download=True, transform=transform), batch_size=batch_size, shuffle=True, num_workers=4)
-test_loader = torch.utils.data.DataLoader(datasets.CIFAR100('/root/autodl-tmp/data', train=False, download=True, transform=transform), batch_size=batch_size, shuffle=False, num_workers=4)
 
+transform_test = transforms.Compose([
+    transforms.Resize(224),
+    transforms.ToTensor(),
+    transforms.Normalize(
+        (0.5071, 0.4867, 0.4408),
+        (0.2675, 0.2565, 0.2761),
+    ),
+])
+
+train_loader = torch.utils.data.DataLoader(
+    datasets.CIFAR100(
+        data_root,
+        train=True,
+        download=True,
+        transform=transform_train,
+    ),
+    batch_size=batch_size,
+    shuffle=True,
+    num_workers=4,
+)
+
+test_loader = torch.utils.data.DataLoader(
+    datasets.CIFAR100(
+        data_root,
+        train=False,
+        download=True,
+        transform=transform_test,
+    ),
+    batch_size=batch_size,
+    shuffle=False,
+    num_workers=4,
+)
 # --- 3. 模型准备 ---
 log_message("Initializing ResNet18 for INT4 QAT (CIFAR-100)...")
 model = models.quantization.resnet18(weights=None, quantize=False)
