@@ -46,22 +46,45 @@ def log_message(msg):
         f.write(full_msg + "\n")
 
 # --- 2. 数据处理：CIFAR-10 ---
-transform = transforms.Compose([
+# 训练集可以使用随机增强；测试集必须固定，不能使用 RandomHorizontalFlip
+transform_train = transforms.Compose([
     transforms.Resize(224),
     transforms.RandomHorizontalFlip(),
     transforms.ToTensor(),
-    transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
+    transforms.Normalize(
+        (0.4914, 0.4822, 0.4465),
+        (0.2023, 0.1994, 0.2010),
+    ),
+])
+
+transform_test = transforms.Compose([
+    transforms.Resize(224),
+    transforms.ToTensor(),
+    transforms.Normalize(
+        (0.4914, 0.4822, 0.4465),
+        (0.2023, 0.1994, 0.2010),
+    ),
 ])
 
 train_loader = torch.utils.data.DataLoader(
-    datasets.CIFAR10(data_root, train=True, download=True, transform=transform),
+    datasets.CIFAR10(
+        data_root,
+        train=True,
+        download=True,
+        transform=transform_train,
+    ),
     batch_size=batch_size,
     shuffle=True,
     num_workers=4,
 )
 
 test_loader = torch.utils.data.DataLoader(
-    datasets.CIFAR10(data_root, train=False, download=True, transform=transform),
+    datasets.CIFAR10(
+        data_root,
+        train=False,
+        download=True,
+        transform=transform_test,
+    ),
     batch_size=batch_size,
     shuffle=False,
     num_workers=4,
