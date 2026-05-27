@@ -31,6 +31,27 @@ from torchvision import datasets, models, transforms
 from torchvision.models.quantization import mobilenet_v2 as quant_mobilenet_v2
 
 
+class QuantizableVGG16(nn.Module):
+    def __init__(self, num_classes: int = 100) -> None:
+        super().__init__()
+        vgg = models.vgg16(weights=None)
+        self.features = vgg.features
+        self.avgpool = vgg.avgpool
+        self.classifier = vgg.classifier
+        self.classifier[6] = nn.Linear(4096, num_classes)
+        self.quant = torch.ao.quantization.QuantStub()
+        self.dequant = torch.ao.quantization.DeQuantStub()
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = self.quant(x)
+        x = self.features(x)
+        x = self.avgpool(x)
+        x = torch.flatten(x, 1)
+        x = self.classifier(x)
+        x = self.dequant(x)
+        return x
+
+
 CIFAR10_MEAN = (0.4914, 0.4822, 0.4465)
 CIFAR10_STD = (0.2023, 0.1994, 0.2010)
 CIFAR100_MEAN = (0.5071, 0.4865, 0.4409)
@@ -102,6 +123,8 @@ def build_model(model_name: str, dataset_name: str) -> nn.Module:
         model = quant_mobilenet_v2(weights=None, quantize=False)
         model.classifier[1] = nn.Linear(model.last_channel, num_classes)
         return model
+    if model_name == "vgg16":
+        return QuantizableVGG16(num_classes=num_classes)
     raise ValueError(f"Unsupported model: {model_name}")
 
 
@@ -114,6 +137,10 @@ def candidate_checkpoint_names(model_name: str, dataset_name: str) -> List[str]:
         return ["fp32_mobilenetv2_c100_best.pth", "fp32_mobilenetv2_best_c100.pth"]
     if model_name == "mobilenetv2" and dataset_name == "cifar10":
         return ["fp32_mobilenetv2_best.pth", "fp32_mobilenetv2_c10_best.pth"]
+    if model_name == "vgg16" and dataset_name == "cifar100":
+        return ["fp32_vgg16_c100_best.pth", "fp32_vgg16_best_c100.pth"]
+    if model_name == "vgg16" and dataset_name == "cifar10":
+        return ["fp32_vgg16_best.pth", "fp32_vgg16_c10_best.pth"]
     return []
 
 
@@ -333,7 +360,7 @@ def run_sensitivity_analysis(args: argparse.Namespace) -> str:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="INT4 layer sensitivity analysis")
-    parser.add_argument("--model", choices=["resnet18", "mobilenetv2"], required=True)
+    parser.add_argument("--model", choices=["resnet18", "mobilenetv2", "vgg16"], required=True)
     parser.add_argument("--dataset", choices=["cifar10", "cifar100"], required=True)
     parser.add_argument("--checkpoint", default=None, help="Optional explicit FP32 checkpoint path")
     parser.add_argument("--device", default=None, help="cuda, cpu, or leave empty for auto")
