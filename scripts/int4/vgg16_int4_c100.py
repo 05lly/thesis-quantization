@@ -64,22 +64,31 @@ class QuantizableVGG16(nn.Module):
         return x
 
     def fuse_model(self):
-        for m in self.modules():
-            if isinstance(m, nn.Sequential):
-                for i in range(len(m) - 1):
-                    if isinstance(m[i], nn.Conv2d) and isinstance(m[i + 1], nn.ReLU):
-                        torch.ao.quantization.fuse_modules(
-                            m,
-                            [str(i), str(i + 1)],
-                            inplace=True,
-                        )
+        # 只融合 VGG16 features 中的 Conv2d + ReLU
+            for i in range(len(self.features) - 1):
+                if isinstance(self.features[i], nn.Conv2d) and isinstance(self.features[i + 1], nn.ReLU):
+                    torch.ao.quantization.fuse_modules(
+                        self.features,
+                        [str(i), str(i + 1)],
+                        inplace=True,
+                )
 
-                    if isinstance(m[i], nn.Linear) and isinstance(m[i + 1], nn.ReLU):
-                        torch.ao.quantization.fuse_modules(
-                            m,
-                            [str(i), str(i + 1)],
-                            inplace=True,
-                        )
+        # 只融合 classifier 中的 Linear + ReLU
+        # torchvision VGG16 classifier:
+        # 0 Linear, 1 ReLU, 2 Dropout, 3 Linear, 4 ReLU, 5 Dropout, 6 Linear
+            torch.ao.quantization.fuse_modules(
+            self.classifier,
+            ["0", "1"],
+            inplace=True,
+        )
+
+            torch.ao.quantization.fuse_modules(
+            self.classifier,
+            ["3", "4"],
+            inplace=True,
+        )
+
+            log_message("VGG16 Fusion complete: features Conv-ReLU and classifier Linear-ReLU fused.")
 
 
 # --- 3. INT4 QAT 配置 ---
@@ -344,6 +353,7 @@ for epoch in range(epochs):
 
 
 # --- 9. 加载 best checkpoint，再做一次最终评估 ---
+
 if os.path.exists(best_path):
     best_state = torch.load(best_path, map_location=device, weights_only=True)
     model.load_state_dict(best_state)
