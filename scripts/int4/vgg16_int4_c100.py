@@ -17,7 +17,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 batch_size = 128
 epochs = 30
 lr = 1e-4
-#grad_clip = 1.0
+grad_clip = 1.0
 
 model_dir = "/root/autodl-tmp/my_backup" if os.path.exists("/root/autodl-tmp") else "models"
 data_root = "/root/autodl-tmp/data" if os.path.exists("/root/autodl-tmp") else "./data"
@@ -250,7 +250,7 @@ log_message(f"Device      : {device}")
 log_message(f"Epochs      : {epochs}")
 log_message(f"Batch size  : {batch_size}")
 log_message(f"LR          : {lr}")
-#log_message(f"Grad clip   : {grad_clip}")
+log_message(f"Grad clip   : {grad_clip}")
 log_message("=" * 70)
 
 
@@ -317,10 +317,10 @@ for epoch in range(epochs):
             optimizer.zero_grad(set_to_none=True)
             continue
 
-       # torch.nn.utils.clip_grad_norm_(
+       torch.nn.utils.clip_grad_norm_(
             model.parameters(),
             max_norm=grad_clip,
-       # )
+        )
 
         optimizer.step()
 
