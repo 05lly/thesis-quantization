@@ -298,12 +298,12 @@ def train_mixed_precision_qat(args: argparse.Namespace) -> None:
     load_state_dict_safely(model, checkpoint_path)
     model.to(device)
 
-    model.train()
+
+    fuse_model_if_supported(model, is_qat=True)
+
     total_layers, int8_layers, matched_sensitive_layers = assign_mixed_precision_qconfig(model, rows, sensitive_layers, log_message)
     int4_layers = total_layers - int8_layers
     log_message(f"CSV quantizable layers: {total_layers} | Matched INT8 sensitive layers: {int8_layers} | INT4 layers: {int4_layers}")
-
-    fuse_model_if_supported(model, is_qat=True)
     if int8_layers == 0:
         raise RuntimeError("No sensitive layers were matched. Please check whether the sensitivity CSV matches the selected model.")
 
