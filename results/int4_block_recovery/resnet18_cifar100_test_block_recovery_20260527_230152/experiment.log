@@ -1,0 +1,47 @@
+[2026-05-27 23:01:55] ================================================================================
+[2026-05-27 23:01:55] ResNet18 Block-Level Recovery Sensitivity Analysis
+[2026-05-27 23:01:55] Dataset: cifar100
+[2026-05-27 23:01:55] Split: test
+[2026-05-27 23:01:55] Device: cuda
+[2026-05-27 23:01:55] Checkpoint: /root/autodl-tmp/my_backup/fp32_resnet18_c100_best.pth
+[2026-05-27 23:01:55] Output directory: results/int4_block_recovery/resnet18_cifar100_test_block_recovery_20260527_230152
+[2026-05-27 23:01:55] Evaluation samples: 10000
+[2026-05-27 23:01:55] Calibration samples: 1024
+[2026-05-27 23:01:55] Candidate recovery units: 10
+[2026-05-27 23:01:55] Optional candidate finetune epochs: 0
+[2026-05-27 23:01:55] This script uses fake quantization; it does not validate real INT4 deployment.
+[2026-05-27 23:01:55] ================================================================================
+[2026-05-27 23:01:55] [BASELINE] Evaluating all-INT4 fake-quantized model...
+[2026-05-27 23:02:01] [BASELINE] all_INT4_acc=22.2400% size=5.3538MB elapsed=6.85s
+[2026-05-27 23:02:01] [CANDIDATE 01/10] Restore unit to INT8: stem | modules=['conv1']
+[2026-05-27 23:02:07] [RESULT] stem         acc=24.2300% gain=+1.9900% size+=0.004486MB elapsed=5.31s
+[2026-05-27 23:02:07] [CANDIDATE 02/10] Restore unit to INT8: layer1.0 | modules=['layer1.0.conv1', 'layer1.0.conv2']
+[2026-05-27 23:02:12] [RESULT] layer1.0     acc=23.6000% gain=+1.3600% size+=0.035278MB elapsed=5.15s
+[2026-05-27 23:02:12] [CANDIDATE 03/10] Restore unit to INT8: layer1.1 | modules=['layer1.1.conv1', 'layer1.1.conv2']
+[2026-05-27 23:02:17] [RESULT] layer1.1     acc=24.6700% gain=+2.4300% size+=0.035278MB elapsed=5.31s
+[2026-05-27 23:02:17] [CANDIDATE 04/10] Restore unit to INT8: layer2.0 | modules=['layer2.0.conv1', 'layer2.0.conv2', 'layer2.0.downsample.0']
+[2026-05-27 23:02:22] [RESULT] layer2.0     acc=28.2400% gain=+6.0000% size+=0.109741MB elapsed=5.09s
+[2026-05-27 23:02:22] [CANDIDATE 05/10] Restore unit to INT8: layer2.1 | modules=['layer2.1.conv1', 'layer2.1.conv2']
+[2026-05-27 23:02:27] [RESULT] layer2.1     acc=27.0400% gain=+4.8000% size+=0.140869MB elapsed=5.14s
+[2026-05-27 23:02:27] [CANDIDATE 06/10] Restore unit to INT8: layer3.0 | modules=['layer3.0.conv1', 'layer3.0.conv2', 'layer3.0.downsample.0']
+[2026-05-27 23:02:33] [RESULT] layer3.0     acc=25.5000% gain=+3.2600% size+=0.438232MB elapsed=5.52s
+[2026-05-27 23:02:33] [CANDIDATE 07/10] Restore unit to INT8: layer3.1 | modules=['layer3.1.conv1', 'layer3.1.conv2']
+[2026-05-27 23:02:38] [RESULT] layer3.1     acc=29.4500% gain=+7.2100% size+=0.562988MB elapsed=5.15s
+[2026-05-27 23:02:38] [CANDIDATE 08/10] Restore unit to INT8: layer4.0 | modules=['layer4.0.conv1', 'layer4.0.conv2', 'layer4.0.downsample.0']
+[2026-05-27 23:02:43] [RESULT] layer4.0     acc=23.2600% gain=+1.0200% size+=1.751465MB elapsed=5.30s
+[2026-05-27 23:02:43] [CANDIDATE 09/10] Restore unit to INT8: layer4.1 | modules=['layer4.1.conv1', 'layer4.1.conv2']
+[2026-05-27 23:02:49] [RESULT] layer4.1     acc=22.2800% gain=+0.0400% size+=2.250977MB elapsed=5.12s
+[2026-05-27 23:02:49] [CANDIDATE 10/10] Restore unit to INT8: classifier | modules=['fc']
+[2026-05-27 23:02:54] [RESULT] classifier   acc=23.0000% gain=+0.7600% size+=0.024462MB elapsed=5.26s
+[2026-05-27 23:02:54] ================================================================================
+[2026-05-27 23:02:54] Final ranking by block-level recovery gain:
+[2026-05-27 23:02:54] rank= 1 | layer3.1     gain= +7.2100% | acc= 29.4500% | modules=layer3.1.conv1;layer3.1.conv2
+[2026-05-27 23:02:54] rank= 2 | layer2.0     gain= +6.0000% | acc= 28.2400% | modules=layer2.0.conv1;layer2.0.conv2;layer2.0.downsample.0
+[2026-05-27 23:02:54] rank= 3 | layer2.1     gain= +4.8000% | acc= 27.0400% | modules=layer2.1.conv1;layer2.1.conv2
+[2026-05-27 23:02:54] rank= 4 | layer3.0     gain= +3.2600% | acc= 25.5000% | modules=layer3.0.conv1;layer3.0.conv2;layer3.0.downsample.0
+[2026-05-27 23:02:54] rank= 5 | layer1.1     gain= +2.4300% | acc= 24.6700% | modules=layer1.1.conv1;layer1.1.conv2
+[2026-05-27 23:02:54] CSV saved: results/int4_block_recovery/resnet18_cifar100_test_block_recovery_20260527_230152/block_recovery_ranking.csv
+[2026-05-27 23:02:54] JSON summary saved: results/int4_block_recovery/resnet18_cifar100_test_block_recovery_20260527_230152/experiment_summary.json
+[2026-05-27 23:02:54] Selected top-k units saved: results/int4_block_recovery/resnet18_cifar100_test_block_recovery_20260527_230152/selected_topk_units.txt
+[2026-05-27 23:02:54] Log saved: results/int4_block_recovery/resnet18_cifar100_test_block_recovery_20260527_230152/experiment.log
+[2026-05-27 23:02:54] ================================================================================

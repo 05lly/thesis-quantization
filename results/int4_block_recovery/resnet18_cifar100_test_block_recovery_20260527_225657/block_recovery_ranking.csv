@@ -1,0 +1,11 @@
+﻿rank,unit_index,unit_name,unit_type,module_prefixes,module_names,parameters,all_int4_acc,recovered_acc,recovery_gain,all_int4_size_mb,mixed_size_mb,size_increase_mb,gain_per_mb,elapsed_seconds
+1,7,layer3.1,residual_block,layer3.1,layer3.1.conv1;layer3.1.conv2,1180672,22.6,31.1,8.5,5.353838,5.916826,0.562988,15.098005,2.44
+2,4,layer2.0,residual_block,layer2.0,layer2.0.conv1;layer2.0.conv2;layer2.0.downsample.0,230144,22.6,27.1,4.5,5.353838,5.463579,0.109741,41.005562,2.46
+3,1,stem,stem_conv,conv1,conv1,9408,22.6,27.0,4.4,5.353838,5.358324,0.004486,980.810884,2.44
+4,6,layer3.0,residual_block,layer3.0,layer3.0.conv1;layer3.0.conv2;layer3.0.downsample.0,919040,22.6,26.7,4.1,5.353838,5.79207,0.438232,9.355766,2.46
+5,5,layer2.1,residual_block,layer2.1,layer2.1.conv1;layer2.1.conv2,295424,22.6,26.6,4.0,5.353838,5.494707,0.140869,28.395147,2.48
+6,3,layer1.1,residual_block,layer1.1,layer1.1.conv1;layer1.1.conv2,73984,22.6,24.6,2.0,5.353838,5.389116,0.035278,56.692042,2.35
+7,2,layer1.0,residual_block,layer1.0,layer1.0.conv1;layer1.0.conv2,73984,22.6,24.2,1.6,5.353838,5.389116,0.035278,45.353633,2.37
+8,8,layer4.0,residual_block,layer4.0,layer4.0.conv1;layer4.0.conv2;layer4.0.downsample.0,3673088,22.6,24.0,1.4,5.353838,7.105303,1.751465,0.799331,2.5
+9,9,layer4.1,residual_block,layer4.1,layer4.1.conv1;layer4.1.conv2,4720640,22.6,22.6,0.0,5.353838,7.604815,2.250977,0.0,2.29
+10,10,classifier,fc,fc,fc,51300,22.6,22.0,-0.6,5.353838,5.3783,0.024462,-24.528094,2.46
